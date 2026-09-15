@@ -3645,7 +3645,8 @@ const BACKUP_DIRS_PREFIX = 'backup_dirs:'; // 备份目录同步 - 跨设备保�
 const APP_CONFIG_KEY = 'r2drive:app:config:v1';
 const BOOTSTRAP_CHALLENGE_PREFIX = 'r2drive:bootstrap:challenge:';
 const BOOTSTRAP_CHALLENGE_TTL_SECONDS = 10 * 60;
-const PASSWORD_KDF_ITERATIONS = 600000;
+// Cloudflare Workers currently caps PBKDF2 at 100,000 iterations.
+const PASSWORD_KDF_ITERATIONS = 100000;
 const MAX_SITE_TITLE_LENGTH = 100;
 
 const SESSION_FUTURE_SKEW_MS = 5 * 60 * 1000;
@@ -3996,25 +3997,26 @@ function randomSecret() {
   return base64UrlEncode(bytes);
 }
 
-async function passwordVerifier(password, salt) {
+async function passwordVerifier(password, salt, iterations = PASSWORD_KDF_ITERATIONS) {
+  const workFactor = Math.max(1, Math.min(PASSWORD_KDF_ITERATIONS, Number(iterations) || PASSWORD_KDF_ITERATIONS));
   const material = await crypto.subtle.importKey('raw', new TextEncoder().encode(String(password || '')), 'PBKDF2', false, ['deriveBits']);
   const bits = await crypto.subtle.deriveBits({
     name: 'PBKDF2',
     hash: 'SHA-256',
     salt: new TextEncoder().encode(String(salt || '')),
-    iterations: PASSWORD_KDF_ITERATIONS
+    iterations: workFactor
   }, material, 256);
   return bytesToHex(bits);
 }
 
 async function passwordRecord(password) {
   const salt = randomSecret();
-  return { salt, hash: await passwordVerifier(password, salt) };
+  return { salt, iterations: PASSWORD_KDF_ITERATIONS, hash: await passwordVerifier(password, salt) };
 }
 
 async function verifyPasswordRecord(password, record) {
   if (!record?.salt || !record?.hash) return false;
-  return constantTimeEqual(await passwordVerifier(password, record.salt), record.hash);
+  return constantTimeEqual(await passwordVerifier(password, record.salt, record.iterations), record.hash);
 }
 
 function htmlResponse(html, status = 200) {

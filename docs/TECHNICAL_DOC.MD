@@ -62,7 +62,7 @@
 - 所有已登录的危险 HTTP API 请求要求同源：`X-R2Drive-CSRF: same-origin`，或匹配的 `Origin` / `Referer`。
 - 登录、分享密码和 WebDAV Basic Auth 在同一来源连续失败 5 次后锁定 15 分钟；D1 仅保存来源地址的 SHA-256 摘要和状态。
 - HTML 响应统一设置 `Cache-Control: no-store`、`X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY`、`Referrer-Policy: same-origin` 与受限 `Permissions-Policy`。
-- 分享密码、管理密码和存储节点 Token 是三类独立凭据，不可相互复用；管理员与 WebDAV 密码使用 PBKDF2 校验记录。
+- 分享密码、管理密码和存储节点 Token 是三类独立凭据，不可相互复用；管理员与 WebDAV 密码使用 PBKDF2-HMAC-SHA-256、100,000 次迭代的校验记录，并保存迭代参数以支持未来迁移。
 
 生产环境仍应在 Cloudflare WAF/Rate Limiting 对 `/api/login`、`/api/share-access` 与 `/dav/*` 加边缘限速。
 
