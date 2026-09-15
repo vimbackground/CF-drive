@@ -5,37 +5,12 @@
  * 配置说明 (Configuration)
  * ============================================
  *
- * 1. R2 存储桶 (必须)
- *    在 wrangler.toml 中绑定 R2 存储桶:
- *    [[r2_buckets]]
- *    binding = "R2_BUCKET"
- *    bucket_name = "cf-drive"
+ * 1. 在 wrangler.toml 仅声明 R2_BUCKET、DB 与 BOOTSTRAP_OWNER_PUBLIC_KEY。
+ *    R2/D1 由首次 Workers Builds 部署自动创建；所有者公钥只用于首次认领签名。
  *
- * 2. D1 数据库 (必须 - 用于文件路径映射和上传会话)
- *    在 wrangler.toml 中绑定 D1:
- *    [[d1_databases]]
- *    binding = "DB"
- *    database_name = "cf-drive"
- *    database_id = "your-d1-database-id"
- *
- * 3. 访问密码 (必须 - 缺失时主站拒绝启动)
- *    在 Worker 环境变量中设置:
- *    ACCESS_PASSWORD = "your-password"
- *
- * 4. 站点标题 (可选)
- *    SITE_TITLE = "CF-drive"
- *
- * 5. 云盘图标 (可选 - 图片链接)
- *    CLOUD_ICON_URL = "https://example.com/icon.png"
- *
- * 6. 登录页背景图 (可选 - 图片链接，不设置则为淡灰色)
- *    LOGIN_BACKGROUND_URL = "https://example.com/login-bg.jpg"
- *
- * 7. 存储节点密钥 (可选 - 节点 Worker 接收分片时使用)
- *    STORAGE_NODE_TOKEN = "your-node-token"
- *
- * 8. 分享密钥 (必须 - 必须独立于管理员密码和节点密钥)
- *    SHARE_SECRET = "a-long-random-secret"
+ * 2. 首次访问 /setup 时使用本地所有者私钥签名并设置管理员密码。
+ *    管理员/WebDAV 密码校验记录、签名密钥与运行配置全部保存于 D1，
+ *    不需要在 Cloudflare Variables and Secrets 中设置应用密码或 Token。
  */
 
 const MIME_TYPES = {
@@ -2850,6 +2825,15 @@ document.addEventListener('DOMContentLoaded', () => {
 </html>`;
 }
 
+function renderSetupPage(siteTitle = 'CF-drive') {
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>初始化 ${escapeHtml(siteTitle)}</title><style>body{font-family:system-ui,sans-serif;max-width:520px;margin:10vh auto;padding:24px;background:#f6f8fa;color:#1f2328}main{background:#fff;padding:28px;border-radius:12px;box-shadow:0 2px 12px #0001}label{display:block;margin:16px 0 6px}input{box-sizing:border-box;width:100%;padding:10px}button{margin-top:20px;padding:10px 16px}#status{white-space:pre-wrap;color:#b42318}</style></head><body><main><h1>初始化 ${escapeHtml(siteTitle)}</h1><p>请选择部署所有者私钥文件，并设置管理员密码。私钥只在浏览器中用于签名，不会上传或保存。</p><label>所有者私钥（JWK JSON）<input id="key" type="file" accept="application/json"></label><label>管理员密码（至少 12 位）<input id="password" type="password" minlength="12" autocomplete="new-password"></label><label>站点标题（可选）<input id="title" value="${escapeAttr(siteTitle)}" maxlength="100"></label><button id="claim">认领并初始化</button><p id="status" role="alert"></p></main><script>const b64u=b=>{let s='';new Uint8Array(b).forEach(x=>s+=String.fromCharCode(x));return btoa(s).replace(/\\+/g,'-').replace(/\\//g,'_').replace(/=+$/,'')};document.getElementById('claim').onclick=async()=>{const status=document.getElementById('status');try{const file=document.getElementById('key').files[0];const password=document.getElementById('password').value;if(!file)throw Error('请选择所有者私钥文件');if(password.length<12)throw Error('管理员密码至少需要 12 位');const key=await crypto.subtle.importKey('jwk',JSON.parse(await file.text()),{name:'ECDSA',namedCurve:'P-256'},false,['sign']);const challenge=await fetch('/api/setup/challenge',{cache:'no-store'}).then(async r=>{if(!r.ok)throw Error(await r.text());return r.json()});const signature=await crypto.subtle.sign({name:'ECDSA',hash:'SHA-256'},key,new TextEncoder().encode(challenge.message));const response=await fetch('/api/setup/claim',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({nonce:challenge.nonce,signature:b64u(signature),password,siteTitle:document.getElementById('title').value})});const result=await response.json();if(!response.ok||!result.ok)throw Error(result.error||'初始化失败');location.href='/login'}catch(error){status.textContent=error.message||'初始化失败'}};</script></body></html>`;
+}
+
+function renderSettingsPage(settings, siteTitle = 'CF-drive') {
+  const safe = JSON.stringify(settings).replace(/</g, '\\u003c');
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>设置 - ${escapeHtml(siteTitle)}</title><style>body{font-family:system-ui,sans-serif;max-width:680px;margin:5vh auto;padding:24px;background:#f6f8fa}main{background:#fff;padding:28px;border-radius:12px}label{display:block;margin:14px 0 6px}input{box-sizing:border-box;width:100%;padding:10px}button{margin:18px 8px 0 0;padding:10px 16px}small{color:#57606a}#status{white-space:pre-wrap}</style></head><body><main><h1>实例设置</h1><p><a href="/">返回网盘</a></p><label>站点标题<input id="siteTitle" maxlength="100"></label><label>WebDAV 用户名<input id="webdavUsername" autocomplete="username"></label><label>WebDAV 新密码 <small>留空保持不变</small><input id="webdavPassword" type="password" minlength="12" autocomplete="new-password"></label><label><input id="webdavEnabled" type="checkbox" style="width:auto"> 启用 WebDAV</label><label>WebDAV 最大上传字节数<input id="maxUploadBytes" type="number" min="1"></label><label>新的管理员密码 <small>留空保持不变</small><input id="adminPassword" type="password" minlength="12" autocomplete="new-password"></label><label><input id="rotateShareSecret" type="checkbox" style="width:auto"> 轮换分享签名密钥（会使现有分享授权 Cookie 失效）</label><button id="save">保存</button><p id="status" role="alert"></p></main><script>const initial=${safe};for(const [id,value] of Object.entries({siteTitle:initial.siteTitle,webdavUsername:initial.webdav.username,maxUploadBytes:initial.webdav.maxUploadBytes}))document.getElementById(id).value=value;document.getElementById('webdavEnabled').checked=initial.webdav.enabled;document.getElementById('save').onclick=async()=>{const status=document.getElementById('status');const body={siteTitle:document.getElementById('siteTitle').value,webdav:{enabled:document.getElementById('webdavEnabled').checked,username:document.getElementById('webdavUsername').value,maxUploadBytes:Number(document.getElementById('maxUploadBytes').value),password:document.getElementById('webdavPassword').value},adminPassword:document.getElementById('adminPassword').value,rotateShareSecret:document.getElementById('rotateShareSecret').checked};const r=await fetch('/api/settings',{method:'PUT',headers:{'Content-Type':'application/json','X-R2Drive-CSRF':'same-origin'},body:JSON.stringify(body)});const data=await r.json();status.textContent=data.ok?'已保存。':'保存失败：'+(data.error||r.status)};</script></body></html>`;
+}
+
 function renderLoginPage(error = '', siteTitle = 'CF-drive', cloudIconUrl = '', loginBackgroundUrl = '') {
   const bgUrl = String(loginBackgroundUrl || '').trim();
   const loginBg = bgUrl
@@ -3658,6 +3642,11 @@ const DOWNLOAD_OUTPUT_CHUNK_BYTES = 256 * 1024;
 const DOWNLOAD_NODE_FETCH_RETRIES = 3;
 const DISTRIBUTED_UPLOAD_THRESHOLD_BYTES = 512 * 1024; // 512 KB - 超过此大小的文件使用分布式存储
 const BACKUP_DIRS_PREFIX = 'backup_dirs:'; // 备份目录同步 - 跨设备保留同步目录
+const APP_CONFIG_KEY = 'r2drive:app:config:v1';
+const BOOTSTRAP_CHALLENGE_PREFIX = 'r2drive:bootstrap:challenge:';
+const BOOTSTRAP_CHALLENGE_TTL_SECONDS = 10 * 60;
+const PASSWORD_KDF_ITERATIONS = 600000;
+const MAX_SITE_TITLE_LENGTH = 100;
 
 const SESSION_FUTURE_SKEW_MS = 5 * 60 * 1000;
 
@@ -3989,6 +3978,45 @@ function requireFsKv(env) {
   return d1KvStore(env.DB);
 }
 
+function base64UrlEncode(bytes) {
+  let binary = '';
+  for (const byte of new Uint8Array(bytes)) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function base64UrlDecode(value = '') {
+  const normalized = String(value || '').replace(/-/g, '+').replace(/_/g, '/');
+  const padded = normalized + '='.repeat((4 - normalized.length % 4) % 4);
+  const binary = atob(padded);
+  return Uint8Array.from(binary, char => char.charCodeAt(0));
+}
+
+function randomSecret() {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  return base64UrlEncode(bytes);
+}
+
+async function passwordVerifier(password, salt) {
+  const material = await crypto.subtle.importKey('raw', new TextEncoder().encode(String(password || '')), 'PBKDF2', false, ['deriveBits']);
+  const bits = await crypto.subtle.deriveBits({
+    name: 'PBKDF2',
+    hash: 'SHA-256',
+    salt: new TextEncoder().encode(String(salt || '')),
+    iterations: PASSWORD_KDF_ITERATIONS
+  }, material, 256);
+  return bytesToHex(bits);
+}
+
+async function passwordRecord(password) {
+  const salt = randomSecret();
+  return { salt, hash: await passwordVerifier(password, salt) };
+}
+
+async function verifyPasswordRecord(password, record) {
+  if (!record?.salt || !record?.hash) return false;
+  return constantTimeEqual(await passwordVerifier(password, record.salt), record.hash);
+}
+
 function htmlResponse(html, status = 200) {
   return new Response(html, {
     status,
@@ -4177,6 +4205,127 @@ async function kvListKeys(env, prefix) {
     if (safety > 1000) throw new Error('too many metadata list pages');
   } while (cursor);
   return keys;
+}
+
+function normalizeSiteTitle(value) {
+  const title = String(value || '').trim();
+  if (!title) return 'CF-drive';
+  if (title.length > MAX_SITE_TITLE_LENGTH) throw new Error('site title is too long');
+  return title;
+}
+
+function publicAppSettings(config) {
+  return {
+    initialized: true,
+    siteTitle: normalizeSiteTitle(config?.siteTitle),
+    cloudIconUrl: String(config?.cloudIconUrl || ''),
+    loginBackgroundUrl: String(config?.loginBackgroundUrl || ''),
+    webdav: {
+      enabled: config?.webdav?.enabled === true,
+      username: String(config?.webdav?.username || ''),
+      maxUploadBytes: Number(config?.webdav?.maxUploadBytes || 100 * 1024 * 1024),
+      passwordConfigured: !!config?.webdav?.password?.hash
+    },
+    storageNodeTokenConfigured: !!config?.storageNodeToken
+  };
+}
+
+async function getAppConfig(env) {
+  const config = await kvGetJson(env, APP_CONFIG_KEY);
+  return config?.version === 1 ? config : null;
+}
+
+async function insertAppConfig(env, config) {
+  await ensureD1KvSchema(env.DB);
+  try {
+    await env.DB.prepare(`INSERT INTO ${D1_KV_TABLE} ("key", "value", expires_at) VALUES (?, ?, NULL)`)
+      .bind(APP_CONFIG_KEY, JSON.stringify(config)).run();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function saveAppConfig(env, config) {
+  await kvPutJson(env, APP_CONFIG_KEY, config);
+}
+
+function runtimeEnvFromConfig(env, config) {
+  return {
+    ...env,
+    ACCESS_PASSWORD_HASH: config.adminPassword?.hash || '',
+    ACCESS_PASSWORD_SALT: config.adminPassword?.salt || '',
+    SESSION_SECRET: config.sessionSecret || '',
+    SHARE_SECRET: config.shareSecret || '',
+    WEBDAV_ENABLED: config.webdav?.enabled === true ? 'true' : 'false',
+    WEBDAV_USERNAME: config.webdav?.username || '',
+    WEBDAV_PASSWORD_HASH: config.webdav?.password?.hash || '',
+    WEBDAV_PASSWORD_SALT: config.webdav?.password?.salt || '',
+    WEBDAV_MAX_UPLOAD_BYTES: String(config.webdav?.maxUploadBytes || 100 * 1024 * 1024),
+    STORAGE_NODE_TOKEN: config.storageNodeToken || '',
+    SITE_TITLE: normalizeSiteTitle(config.siteTitle),
+    CLOUD_ICON_URL: config.cloudIconUrl || '',
+    LOGIN_BACKGROUND_URL: config.loginBackgroundUrl || ''
+  };
+}
+
+function legacyRuntimeConfigured(env) {
+  return !!(env.ACCESS_PASSWORD && env.SHARE_SECRET);
+}
+
+function bootstrapOwnerKey(env) {
+  const encoded = String(env.BOOTSTRAP_OWNER_PUBLIC_KEY || '').trim();
+  if (!encoded) return null;
+  try {
+    const key = JSON.parse(new TextDecoder().decode(base64UrlDecode(encoded)));
+    if (key?.kty !== 'EC' || key?.crv !== 'P-256' || !key.x || !key.y) return null;
+    return key;
+  } catch {
+    return null;
+  }
+}
+
+async function createBootstrapChallenge(env, origin) {
+  const nonce = randomSecret();
+  const createdAt = Date.now();
+  await kvPutJson(env, BOOTSTRAP_CHALLENGE_PREFIX + nonce, { origin, createdAt }, { expirationTtl: BOOTSTRAP_CHALLENGE_TTL_SECONDS });
+  return { nonce, createdAt, message: `cf-drive:bootstrap:v1:${origin}:${nonce}:${createdAt}` };
+}
+
+async function verifyBootstrapClaim(env, body, origin) {
+  const nonce = String(body?.nonce || '');
+  const challenge = await kvGetJson(env, BOOTSTRAP_CHALLENGE_PREFIX + nonce);
+  if (!challenge || challenge.origin !== origin || !Number.isFinite(Number(challenge.createdAt))) return false;
+  const ownerKey = bootstrapOwnerKey(env);
+  if (!ownerKey) return false;
+  try {
+    const key = await crypto.subtle.importKey('jwk', ownerKey, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']);
+    const signature = base64UrlDecode(body.signature || '');
+    const message = `cf-drive:bootstrap:v1:${origin}:${nonce}:${challenge.createdAt}`;
+    const valid = await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, key, signature, new TextEncoder().encode(message));
+    if (valid) await kvDelete(env, BOOTSTRAP_CHALLENGE_PREFIX + nonce);
+    return valid;
+  } catch {
+    return false;
+  }
+}
+
+async function createInitialAppConfig(body = {}) {
+  const password = String(body.password || '');
+  if (password.length < 12) throw new Error('管理员密码至少需要 12 个字符');
+  const adminPassword = await passwordRecord(password);
+  return {
+    version: 1,
+    initializedAt: new Date().toISOString(),
+    adminPassword,
+    sessionSecret: randomSecret(),
+    shareSecret: randomSecret(),
+    siteTitle: normalizeSiteTitle(body.siteTitle),
+    cloudIconUrl: '',
+    loginBackgroundUrl: '',
+    webdav: { enabled: false, username: '', password: null, maxUploadBytes: 100 * 1024 * 1024 },
+    storageNodeToken: randomSecret()
+  };
 }
 
 function shareEntryKey(id = '') {
@@ -6196,12 +6345,14 @@ function isWebDavEnabled(env) {
   return String(env.WEBDAV_ENABLED || '').trim().toLowerCase() === 'true';
 }
 
-function isWebDavAuthenticated(request, env) {
-  if (!isWebDavEnabled(env) || !env.WEBDAV_USERNAME || !env.WEBDAV_PASSWORD) return false;
+async function isWebDavAuthenticated(request, env) {
+  if (!isWebDavEnabled(env) || !env.WEBDAV_USERNAME) return false;
   const credentials = parseBasicAuthorization(request);
-  return !!credentials
-    && constantTimeEqual(credentials.username, env.WEBDAV_USERNAME)
-    && constantTimeEqual(credentials.password, env.WEBDAV_PASSWORD);
+  if (!credentials || !constantTimeEqual(credentials.username, env.WEBDAV_USERNAME)) return false;
+  if (env.WEBDAV_PASSWORD_HASH) {
+    return verifyPasswordRecord(credentials.password, { salt: env.WEBDAV_PASSWORD_SALT, hash: env.WEBDAV_PASSWORD_HASH });
+  }
+  return !!env.WEBDAV_PASSWORD && constantTimeEqual(credentials.password, env.WEBDAV_PASSWORD);
 }
 
 function webDavDestination(request) {
@@ -6298,7 +6449,7 @@ function webDavLockXml(request, path, lock) {
 }
 
 async function handleWebDavRequest(request, env, R2, ctx) {
-  if (!isWebDavEnabled(env) || !env.WEBDAV_USERNAME || !env.WEBDAV_PASSWORD) {
+  if (!isWebDavEnabled(env) || !env.WEBDAV_USERNAME || (!env.WEBDAV_PASSWORD && !env.WEBDAV_PASSWORD_HASH)) {
     return new Response('WebDAV is disabled or not configured', {
       status: 503,
       headers: webDavHeaders({ 'Content-Type': 'text/plain;charset=UTF-8' })
@@ -6308,7 +6459,7 @@ async function handleWebDavRequest(request, env, R2, ctx) {
   if (await isAuthRateLimited(env, rateKey)) {
     return new Response('Too many authentication attempts', { status: 429, headers: webDavHeaders({ 'Retry-After': String(AUTH_RATE_LIMIT_LOCK_MS / 1000) }) });
   }
-  if (!isWebDavAuthenticated(request, env)) {
+  if (!await isWebDavAuthenticated(request, env)) {
     await registerAuthFailure(env, rateKey);
     return webDavUnauthorizedResponse();
   }
@@ -6488,10 +6639,9 @@ async function handleWebDavRequest(request, env, R2, ctx) {
 }
 
 async function isAuthenticated(request, env) {
-  if (!env.ACCESS_PASSWORD) return false;
   const token = getCookie(request, SESSION_COOKIE);
   if (!token) return false;
-  return verifyToken(token, env.ACCESS_PASSWORD);
+  return verifyToken(token, env.SESSION_SECRET || env.ACCESS_PASSWORD);
 }
 
 function workerErrorResponse(request, err) {
@@ -6534,24 +6684,56 @@ export default {
     const url = new URL(request.url);
     const path = url.pathname;
     const R2 = env.R2_BUCKET;
-    const siteTitle = env.SITE_TITLE || 'CF-drive';
-    const cloudIconUrl = env.CLOUD_ICON_URL || '';
-    const loginBackgroundUrl = env.LOGIN_BACKGROUND_URL || '';
+    let siteTitle = 'CF-drive';
+    let cloudIconUrl = '';
+    let loginBackgroundUrl = '';
 
     if (!R2) {
       return new Response('未配置 R2 存储桶。请在 wrangler.toml 中绑定 R2_BUCKET。', { status: 500 });
-    }
-
-    if (path.startsWith('/api/node/')) {
-      return handleStorageNodeApi(request, env);
     }
 
     if (!hasMetadataStore(env)) {
       return new Response('未配置 D1 数据库。文件路径映射需要绑定 DB。', { status: 500 });
     }
 
-    if (!env.ACCESS_PASSWORD || !env.SHARE_SECRET) {
-      return new Response('未完成安全配置。必须设置 ACCESS_PASSWORD 和 SHARE_SECRET。', { status: 500 });
+    let appConfig = await getAppConfig(env);
+    if (!appConfig && !legacyRuntimeConfigured(env)) {
+      if (!bootstrapOwnerKey(env)) {
+        return new Response('未完成实例初始化。请先在 wrangler.toml 配置 BOOTSTRAP_OWNER_PUBLIC_KEY。', { status: 503 });
+      }
+      if (path === '/api/setup/challenge' && request.method === 'GET') {
+        const rateKey = await authRateLimitKey(request, 'bootstrap');
+        if (await isAuthRateLimited(env, rateKey)) return jsonResponse({ ok: false, error: 'too many setup attempts; try again later' }, 429);
+        await registerAuthFailure(env, rateKey);
+        return jsonResponse(await createBootstrapChallenge(env, url.origin));
+      }
+      if (path === '/api/setup/claim' && request.method === 'POST') {
+        const body = await request.json().catch(() => ({}));
+        const rateKey = await authRateLimitKey(request, 'bootstrap');
+        if (await isAuthRateLimited(env, rateKey)) return jsonResponse({ ok: false, error: 'too many setup attempts; try again later' }, 429);
+        if (!await verifyBootstrapClaim(env, body, url.origin)) {
+          await registerAuthFailure(env, rateKey);
+          return jsonResponse({ ok: false, error: '初始化签名无效或已过期' }, 403);
+        }
+        await clearAuthFailures(env, rateKey);
+        const initial = await createInitialAppConfig(body);
+        if (!await insertAppConfig(env, initial)) return jsonResponse({ ok: false, error: '实例已被初始化' }, 409);
+        return jsonResponse({ ok: true });
+      }
+      if (path === '/setup' && request.method === 'GET') return htmlResponse(renderSetupPage(siteTitle));
+      if (path.startsWith('/api/')) return jsonResponse({ ok: false, error: 'instance setup required' }, 503);
+      return Response.redirect(new URL('/setup', url).toString(), 302);
+    }
+
+    if (appConfig) {
+      env = runtimeEnvFromConfig(env, appConfig);
+    }
+    siteTitle = env.SITE_TITLE || 'CF-drive';
+    cloudIconUrl = env.CLOUD_ICON_URL || '';
+    loginBackgroundUrl = env.LOGIN_BACKGROUND_URL || '';
+
+    if (path.startsWith('/api/node/')) {
+      return handleStorageNodeApi(request, env);
     }
 
     if (path === WEBDAV_PREFIX || path.startsWith(WEBDAV_PREFIX + '/')) {
@@ -6567,12 +6749,15 @@ export default {
       const rateKey = await authRateLimitKey(request, 'login');
       if (await isAuthRateLimited(env, rateKey)) return jsonResponse({ ok: false, error: 'too many attempts; try again later' }, 429);
       const { password } = await request.json().catch(() => ({}));
-      if (!constantTimeEqual(password, env.ACCESS_PASSWORD)) {
+      const passwordValid = env.ACCESS_PASSWORD_HASH
+        ? await verifyPasswordRecord(password, { salt: env.ACCESS_PASSWORD_SALT, hash: env.ACCESS_PASSWORD_HASH })
+        : constantTimeEqual(password, env.ACCESS_PASSWORD);
+      if (!passwordValid) {
         await registerAuthFailure(env, rateKey);
         return Response.json({ ok: false });
       }
       await clearAuthFailures(env, rateKey);
-      const token = await generateToken(password, env.ACCESS_PASSWORD);
+      const token = await generateToken(password, env.SESSION_SECRET || env.ACCESS_PASSWORD);
       return new Response(JSON.stringify({ ok: true }), {
         headers: {
           'Content-Type': 'application/json',
@@ -6589,6 +6774,53 @@ export default {
           'Set-Cookie': `${SESSION_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0`
         }
       });
+    }
+
+    if (path === '/settings' && request.method === 'GET') {
+      if (!await isAuthenticated(request, env)) return Response.redirect(new URL('/login', url).toString(), 302);
+      if (!appConfig) return new Response('旧版实例需先迁移至 D1 配置。', { status: 409 });
+      return htmlResponse(renderSettingsPage(publicAppSettings(appConfig), siteTitle));
+    }
+
+    if (path === '/api/settings' && request.method === 'GET') {
+      if (!await isAuthenticated(request, env)) return new Response('Unauthorized', { status: 401 });
+      if (!appConfig) return jsonResponse({ ok: false, error: 'legacy configuration migration required' }, 409);
+      return jsonResponse({ ok: true, settings: publicAppSettings(appConfig) });
+    }
+
+    if (path === '/api/settings' && request.method === 'PUT') {
+      if (!await isAuthenticated(request, env)) return new Response('Unauthorized', { status: 401 });
+      if (!isSameOriginRequest(request)) return csrfErrorResponse();
+      if (!appConfig) return jsonResponse({ ok: false, error: 'legacy configuration migration required' }, 409);
+      const body = await request.json().catch(() => ({}));
+      const next = structuredClone(appConfig);
+      next.siteTitle = normalizeSiteTitle(body.siteTitle);
+      next.cloudIconUrl = String(body.cloudIconUrl || '').trim();
+      next.loginBackgroundUrl = String(body.loginBackgroundUrl || '').trim();
+      const webdav = body.webdav || {};
+      const username = String(webdav.username || '').trim();
+      const enabled = webdav.enabled === true;
+      const maxUploadBytes = Math.max(1, Math.min(1024 * 1024 * 1024, Math.floor(Number(webdav.maxUploadBytes || 100 * 1024 * 1024))));
+      const nextPassword = String(webdav.password || '');
+      next.webdav = { ...next.webdav, enabled, username, maxUploadBytes };
+      if (nextPassword) {
+        if (nextPassword.length < 12) return jsonResponse({ ok: false, error: 'WebDAV 密码至少需要 12 个字符' }, 400);
+        next.webdav.password = await passwordRecord(nextPassword);
+      }
+      if (enabled && (!username || !next.webdav.password?.hash)) {
+        return jsonResponse({ ok: false, error: '启用 WebDAV 前必须设置用户名和密码' }, 400);
+      }
+      const nextAdminPassword = String(body.adminPassword || '');
+      if (nextAdminPassword) {
+        if (nextAdminPassword.length < 12) return jsonResponse({ ok: false, error: '管理员密码至少需要 12 个字符' }, 400);
+        next.adminPassword = await passwordRecord(nextAdminPassword);
+        next.sessionSecret = randomSecret();
+      }
+      if (body.rotateShareSecret === true) next.shareSecret = randomSecret();
+      if (body.rotateStorageNodeToken === true) next.storageNodeToken = randomSecret();
+      await saveAppConfig(env, next);
+      appConfig = next;
+      return jsonResponse({ ok: true, settings: publicAppSettings(next) });
     }
 
         // ── Clipboard API (metadata-backed, authenticated) ──

@@ -1,5 +1,3 @@
-# Copy to .dev.vars for local development only. Never commit real credentials.
-ACCESS_PASSWORD="replace-with-admin-password"
-SHARE_SECRET="generate-a-long-random-secret"
-WEBDAV_USERNAME="webdav-user"
-WEBDAV_PASSWORD="generate-a-separate-long-random-password"
+# CF-drive stores application configuration in D1 after owner-signed setup.
+# Do not put application passwords or signing keys in this file.
+# The local owner private key is generated under .cf-drive/ and is ignored by Git.

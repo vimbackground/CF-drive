@@ -18,9 +18,10 @@ Cloudflare Workers Builds 的 Git 集成、构建命令和生产分支规则以 
 
 ## 一次性初始化
 
-1. 保持仓库中的 `wrangler.toml`：它只包含 `R2_BUCKET` 和 `DB` 的绑定名，首次部署时自动创建资源。
-2. 确认 `wrangler.toml` 中的 `name` 为 `cf-drive`，R2 绑定名为 `R2_BUCKET`，D1 绑定名为 `DB`；不要填入资源名称或 D1 ID。
-3. 提交不含密钥的代码、测试、文档和 `wrangler.toml`：
+1. 运行 `npm.cmd run bootstrap:keygen`；私钥保存在本地、被 Git 忽略的 `.cf-drive/`。
+2. 将命令输出的 `BOOTSTRAP_OWNER_PUBLIC_KEY` 写入 `wrangler.toml`。它是公开验证材料，不是密码或 Secret。
+3. 确认 `wrangler.toml` 中的 `name` 为 `cf-drive`，R2 绑定名为 `R2_BUCKET`，D1 绑定名为 `DB`；不要填入资源名称或 D1 ID。
+4. 提交不含私钥的代码、测试、文档和 `wrangler.toml`：
 
 ```powershell
 git add worker.js package.json wrangler.toml test README.MD docs
@@ -28,7 +29,7 @@ git commit -m "chore: initialize cf-drive deployment"
 git push origin main
 ```
 
-不要提交 `.dev.vars`、`.env`、任何密码、Token 或 Cloudflare API 凭据。
+不要提交 `.cf-drive/`、`.dev.vars`、`.env`、任何密码、Token 或 Cloudflare API 凭据。
 
 ## Cloudflare Dashboard 设置
 
@@ -46,14 +47,14 @@ git push origin main
 | Deploy command | `npx wrangler deploy` |
 | Builds for non-production branches | 关闭 |
 
-Cloudflare 中的 Worker 名称必须与 `wrangler.toml` 的 `name` 一致，否则构建会失败。首次部署会自动创建 R2/D1；随后在资源页面确认生成的绑定。构建变量只在构建期间可见；`ACCESS_PASSWORD`、`SHARE_SECRET` 等运行时凭据必须在 **Settings > Variables and Secrets** 中设置为 Secret。
+Cloudflare 中的 Worker 名称必须与 `wrangler.toml` 的 `name` 一致，否则构建会失败。首次部署会自动创建 R2/D1；随后在资源页面确认生成的绑定。无需在 **Settings > Variables and Secrets** 添加应用密码或 Token；首次部署后由 `/setup` 的所有者签名认领流程创建 D1 配置。
 
 ## 首次验证
 
 1. 在 Cloudflare 的 **Deployments** 页面确认构建依次完成 `npm run verify` 与 `npx wrangler deploy`。
-2. 打开生成的 `workers.dev` 地址，确认主站没有“未完成安全配置”提示。
-3. 完成 [部署手册](./DEPLOYMENT.md#6-首次功能验收) 的功能检查。
-4. 通过后再添加自定义域名和 WebDAV。
+2. 打开生成的 `workers.dev` 地址的 `/setup`，选择本地所有者私钥并设置管理员密码。
+3. 登录后完成 [部署手册](./DEPLOYMENT.md#6-首次功能验收) 的功能检查。
+4. 通过后再添加自定义域名，并在实例 `/settings` 启用 WebDAV。
 
 ## 日常发布与回退
 

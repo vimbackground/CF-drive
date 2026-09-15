@@ -21,16 +21,11 @@
 | --- | --- | --- | --- |
 | R2 绑定 | `R2_BUCKET` | 是 | 主控文件对象、manifest 与本节点分片。 |
 | D1 绑定 | `DB` | 是 | 虚拟文件系统及全部状态数据。 |
-| Secret | `ACCESS_PASSWORD` | 是 | 网页管理端登录密码与会话签名密钥。 |
-| Secret | `SHARE_SECRET` | 是 | 分享密码、授权与下载租约签名密钥。 |
-| Secret | `WEBDAV_USERNAME` / `WEBDAV_PASSWORD` | 启用 WebDAV 时 | WebDAV Basic Auth 专用凭据。 |
-| Secret | `STORAGE_NODE_TOKEN` | 节点模式时 | `/api/node/*` 的 Bearer Token。 |
-| 文本变量 | `WEBDAV_ENABLED` | 否，默认 `false` | 仅值为 `true` 时开启 WebDAV。 |
-| 文本变量 | `WEBDAV_MAX_UPLOAD_BYTES` | 否，默认 104857600 | 单次 WebDAV PUT 上限。 |
-| 文本变量 | `DOWNLOAD_RANGE_SIZE_MB` | 否，范围 1–32 | 分布式下载内部读取块大小。 |
-| 文本变量 | `SITE_TITLE`、`CLOUD_ICON_URL`、`LOGIN_BACKGROUND_URL` | 否 | 站点外观。 |
+| Wrangler 文本变量 | `BOOTSTRAP_OWNER_PUBLIC_KEY` | 是 | 首次 `/setup` 认领签名验证的 P-256 公钥；不含私钥。 |
+| D1 配置 | 管理员密码校验记录、会话/分享签名密钥 | 认领时生成 | 认证和分享；密码不保存原文。 |
+| D1 配置 | WebDAV、站点外观、上传上限、节点 Token | 否 | 在实例 `/settings` 管理。 |
 
-真实 Secret 只放在 Cloudflare Worker Secrets 或本地忽略的 `.dev.vars`；`wrangler.toml` 可以提交，因为仅含绑定名。首次部署由 Cloudflare 自动创建并绑定新的 R2 与 D1，生成的资源 ID 不会写回 GitHub 仓库。
+私钥只保留在本地忽略的 `.cf-drive/`；`wrangler.toml` 可以提交，因为仅包含资源绑定和所有者公钥。首次部署由 Cloudflare 自动创建并绑定新的 R2 与 D1，生成的资源 ID 不会写回 GitHub 仓库。
 
 ## 数据模型
 
@@ -56,17 +51,18 @@
 | `r2drive:rate-limit:` | 登录、分享密码和 WebDAV 认证失败计数。 |
 | `storage_nodes`、`storage_node_usage:` | 外部存储节点配置和容量估算。 |
 | `backup_dirs:` | 客户端备份目录设置。 |
+| `r2drive:app:config:v1` | 实例配置、密码校验记录和 Worker 生成的签名密钥。 |
 
 删除虚拟路径会撤销目标路径及其子路径的分享；移动路径会同步改写其下分享的虚拟路径。对象删除使用 `ctx.waitUntil()` 继续清理 R2 或外部节点分片，因此应结合孤儿扫描和日志进行运营核对。
 
 ## 鉴权与安全边界
 
-- 主站在缺少 R2、D1、`ACCESS_PASSWORD` 或 `SHARE_SECRET` 时返回 500，绝不降级为匿名管理端。
+- 主站在缺少 R2、D1 或所有者公钥时拒绝服务；未认领实例仅开放受所有者签名保护的 `/setup`。
 - 管理会话 Cookie 为 `HttpOnly`、`Secure`、`SameSite=Strict`，有效期 7 天，使用 HMAC-SHA-256 签名。
 - 所有已登录的危险 HTTP API 请求要求同源：`X-R2Drive-CSRF: same-origin`，或匹配的 `Origin` / `Referer`。
 - 登录、分享密码和 WebDAV Basic Auth 在同一来源连续失败 5 次后锁定 15 分钟；D1 仅保存来源地址的 SHA-256 摘要和状态。
 - HTML 响应统一设置 `Cache-Control: no-store`、`X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY`、`Referrer-Policy: same-origin` 与受限 `Permissions-Policy`。
-- 分享密码、管理密码和存储节点 Token 是三类独立凭据，不可相互复用。
+- 分享密码、管理密码和存储节点 Token 是三类独立凭据，不可相互复用；管理员与 WebDAV 密码使用 PBKDF2 校验记录。
 
 生产环境仍应在 Cloudflare WAF/Rate Limiting 对 `/api/login`、`/api/share-access` 与 `/dav/*` 加边缘限速。
 
@@ -91,7 +87,7 @@
 
 ## WebDAV
 
-WebDAV 仅在 `WEBDAV_ENABLED=true` 且专用用户名、密码都存在时提供服务，入口为 `/dav/`。
+WebDAV 仅在实例 `/settings` 启用且专用用户名、密码都存在时提供服务，入口为 `/dav/`。
 
 | 支持 | 说明 |
 | --- | --- |

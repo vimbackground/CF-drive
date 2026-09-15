@@ -11,7 +11,6 @@ binding = "R2_BUCKET"
 binding = "DB"
 
 [vars]
-# Keep WebDAV disabled during the first deployment smoke test.
-WEBDAV_ENABLED = "false"
-# This is a server-side request cap, not an R2 quota. Raise only after testing.
-WEBDAV_MAX_UPLOAD_BYTES = "104857600"
+# Run `npm run bootstrap:keygen`, then replace this placeholder with its public-key output.
+# This value is public and only verifies the first setup signature; it is not a secret.
+BOOTSTRAP_OWNER_PUBLIC_KEY = "eyJrZXlfb3BzIjpbInZlcmlmeSJdLCJleHQiOnRydWUsImt0eSI6IkVDIiwieCI6IjBmR0hJTVh5ZUozV0JOejRGY1VOWUhjV0NvLXVFbHh1M1NQVHk1Z3R4SU0iLCJ5IjoiWk4zdnhHZzZVdGhpaGpLU0FBY0RuQi1DZHowdVA0VU52Q0pJZGhFdkIzOCIsImNydiI6IlAtMjU2In0"

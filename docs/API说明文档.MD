@@ -11,8 +11,20 @@
 - 主站管理 API 需要先 `POST /api/login` 获得会话 Cookie。
 - 所有有副作用的管理 API 还需要同源校验；程序化调用请带 `X-R2Drive-CSRF: same-origin`。
 - 虚拟路径不以 `/` 开头或结尾，不能包含 `.`、`..`、控制字符或空段。
-- 主站未配置 R2、D1、`ACCESS_PASSWORD` 或 `SHARE_SECRET` 时拒绝服务。
-- `/api/node/*` 不使用管理 Cookie，使用 `Authorization: Bearer <STORAGE_NODE_TOKEN>`。
+- 主站未配置 R2、D1 或所有者公钥时拒绝服务；未认领实例只开放 `/setup` 与初始化 API。
+- `/api/node/*` 不使用管理 Cookie，使用实例设置生成或轮换的独立 `STORAGE_NODE_TOKEN`。
+
+## 首次认领与实例设置
+
+首次部署后，打开 `/setup` 并选择本地所有者私钥 JWK 文件。浏览器使用私钥签名，私钥不会上传。初始化成功后设置管理员密码；密码、分享签名密钥、会话签名密钥和 WebDAV 配置保存于 D1。
+
+| 方法与路径 | 认证 | 说明 |
+| --- | --- | --- |
+| `GET /api/setup/challenge` | 所有者公钥已配置且未认领 | 返回 10 分钟有效的一次性签名挑战。 |
+| `POST /api/setup/claim` | 有效 P-256 所有者签名 | `{nonce,signature,password,siteTitle?}`；仅可成功一次。 |
+| `GET /settings` | 管理 Cookie | 实例设置界面。 |
+| `GET /api/settings` | 管理 Cookie | 返回不含密钥或密码的当前设置。 |
+| `PUT /api/settings` | 管理 Cookie + 同源 | 修改站点标题、WebDAV、管理员密码或轮换内部签名密钥。 |
 
 ## 认证与管理入口
 
@@ -123,7 +135,7 @@
 
 ## WebDAV
 
-端点为 `/dav/`，使用 Basic Auth，不使用网页管理 Cookie。必须同时配置 `WEBDAV_ENABLED=true`、`WEBDAV_USERNAME` 和 `WEBDAV_PASSWORD`。
+端点为 `/dav/`，使用 Basic Auth，不使用网页管理 Cookie。必须在实例 `/settings` 设置独立用户名、密码并启用。
 
 支持 `OPTIONS`、`PROPFIND`、`GET`、`HEAD`、`PUT`、`MKCOL`、`DELETE`、`COPY`、`MOVE`、`LOCK`、`UNLOCK`。`PROPFIND` 只支持文件 Depth 0、目录 Depth 0/1；锁为排他锁，最长一小时。写请求支持常用 ETag 条件头，发生锁冲突返回 423，条件不满足返回 412。
 

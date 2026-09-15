@@ -12,7 +12,7 @@
 - 管理分享：文件和目录可创建可自定义后缀、密码、过期时间、下载次数上限的 `/s/<id>` 分享；可编辑、刷新、撤销和集中管理。
 - 多存储节点：主控 Worker 可将大文件分片分配到自身 R2 与外部节点，并查看节点连通性、容量和对象列表。
 - WebDAV：可选择性启用 `/dav/`，支持常用读写、目录、复制/移动、Range、ETag 条件请求和排他锁。
-- 安全基线：主站强制要求 R2、D1、`ACCESS_PASSWORD` 与 `SHARE_SECRET`；管理会话、分享授权和存储节点认证相互隔离。
+- 安全基线：主站要求 R2、D1 与部署所有者公钥；首次认领后，密码校验记录、签名密钥和运行配置均由 D1 管理。
 
 ## 不包含的兼容能力
 
@@ -22,20 +22,20 @@
 
 Worker 名称为 `cf-drive`。首次 GitHub 部署会自动创建并绑定新的 R2 桶与 D1 数据库；资源名称由 Cloudflare 生成，均以 `cf-drive` 为前缀。
 
-1. 保持仓库中的 `wrangler.toml` 不变；它声明自动创建所需的 R2 与 D1 绑定。
+1. 运行 `npm.cmd run bootstrap:keygen`。私钥会保存在 Git 忽略的 `.cf-drive/bootstrap-owner-private.jwk`；将命令输出的公钥行写入 `wrangler.toml`。
 2. 执行本地验证：
 
 ```powershell
 npm.cmd run verify
 ```
 
-3. 按 [Cloudflare + GitHub 自动部署教程](./docs/GITHUB_CLOUDFLARE_DEPLOYMENT.md) 连接仓库并推送 `main`；首次成功部署后，在 Cloudflare 为 Worker 配置 `ACCESS_PASSWORD` 和 `SHARE_SECRET` 两个 Secret。
+3. 按 [Cloudflare + GitHub 自动部署教程](./docs/GITHUB_CLOUDFLARE_DEPLOYMENT.md) 连接仓库并推送 `main`。首次成功部署后，打开 `/setup`，选择本地私钥并设置管理员密码。
 
 完整的资源、密钥和功能验收步骤见 [部署与安全手册](./docs/DEPLOYMENT.md)。
 
 ## WebDAV
 
-WebDAV 默认关闭。完成网页端和分享功能验收后，配置独立的 `WEBDAV_USERNAME`、`WEBDAV_PASSWORD`，再将 `WEBDAV_ENABLED` 设为 `true`。入口为：
+WebDAV 默认关闭。完成网页端和分享功能验收后，在实例后台 `/settings` 设置独立用户名、密码并启用。入口为：
 
 ```text
 https://<你的域名>/dav/
@@ -57,7 +57,7 @@ WebDAV 凭据不得复用管理员密码；详情与兼容范围见 [技术文�
 .
 ├── worker.js                         # Worker、网页 UI、HTTP API、WebDAV
 ├── wrangler.toml                     # 不含密钥；声明自动创建的 R2/D1 绑定
-├── .dev.vars.example                 # 本地开发密钥模板
+├── tools/generate-bootstrap-owner-key.mjs # 本地所有者密钥生成工具
 ├── package.json                      # 本地检查和测试脚本
 ├── test/worker.test.mjs              # Node 内置回归测试
 ├── version.json                      # 发布版本清单，不参与运行时远程检查

@@ -21,21 +21,13 @@ npm.cmd run verify
 
 ## 3. 保持部署配置
 
-`wrangler.toml` 不包含密钥，应随代码提交；`.dev.vars`、`.env` 和任何真实凭据不能提交。
+`wrangler.toml` 应随代码提交。先运行 `npm.cmd run bootstrap:keygen`，私钥会写入被 Git 忽略的 `.cf-drive/bootstrap-owner-private.jwk`；将输出的 `BOOTSTRAP_OWNER_PUBLIC_KEY` 公钥行写入 `wrangler.toml` 后提交。不要提交私钥、`.dev.vars`、`.env` 或任何密码。
 
-## 4. 配置运行时 Secret
+## 4. 首次认领实例
 
-首次部署创建 Worker 后，在 **Workers & Pages > cf-drive > Settings > Variables and Secrets** 添加：
+无需在 Cloudflare **Variables and Secrets** 配置应用密码或 Token。首次部署创建 Worker 后，打开 `https://<你的域名>/setup`，选择本地 `.cf-drive/bootstrap-owner-private.jwk`，设置至少 12 位的管理员密码并完成认领。
 
-| 名称 | 类型 | 要求 |
-| --- | --- | --- |
-| `ACCESS_PASSWORD` | Secret | 管理端高强度密码。 |
-| `SHARE_SECRET` | Secret | 独立、随机、长字符串。 |
-| `WEBDAV_USERNAME` | Secret | 仅启用 WebDAV 时设置。 |
-| `WEBDAV_PASSWORD` | Secret | 独立于管理端密码。 |
-| `STORAGE_NODE_TOKEN` | Secret | 仅将实例作为外部存储节点时设置。 |
-
-首次部署保留 `WEBDAV_ENABLED = "false"`。可选外观变量为 `SITE_TITLE`、`CLOUD_ICON_URL`、`LOGIN_BACKGROUND_URL`；可选下载变量为 `DOWNLOAD_RANGE_SIZE_MB`。
+认领成功后，访问 `/settings` 管理站点标题、WebDAV、管理员密码和密钥轮换。管理员与 WebDAV 密码只存 PBKDF2 校验记录；分享、会话和存储节点的随机密钥由 Worker 生成并保存在 D1，不会回显。
 
 ## 5. 连接 GitHub 并自动发布
 
@@ -60,9 +52,9 @@ npm.cmd run verify
 
 仅在完成上节验收后：
 
-1. 设置专用 `WEBDAV_USERNAME`、`WEBDAV_PASSWORD` Secret。
-2. 添加普通文本变量 `WEBDAV_ENABLED = "true"`。
-3. 可按需设置 `WEBDAV_MAX_UPLOAD_BYTES`，默认 100 MiB。
+1. 登录实例并打开 `/settings`。
+2. 设置专用 WebDAV 用户名和至少 12 位的独立密码，勾选启用 WebDAV。
+3. 可按需调整最大上传字节数，默认 100 MiB。
 4. 用目标客户端在隔离目录测试 `PROPFIND`、`GET`、Range GET、`PUT`、`MKCOL`、`COPY`、`MOVE`、`DELETE`、`LOCK`、`UNLOCK`。
 
 入口为 `https://<你的域名>/dav/`。WebDAV 不应直接指向含有生产重要文件的根目录进行首次客户端测试。
@@ -71,6 +63,6 @@ npm.cmd run verify
 
 - 在 Cloudflare WAF/Rate Limiting 对 `POST /api/login`、`POST /api/share-access`、`/dav/*` 设置按来源 IP 的边缘限速。
 - 使用自定义域名时强制 HTTPS；不要暴露不受 Cloudflare 管理的 HTTP 回源。
-- Secret 泄露时立即在 Cloudflare 轮换，并使受影响用户重新登录；轮换 `SHARE_SECRET` 会使现有分享密码与授权失效。
+- 所有者私钥泄露时应停止使用该实例并迁移到新的所有者密钥；应用内轮换管理员密码会使现有管理会话失效，轮换分享签名密钥会使分享授权 Cookie 失效。
 - 每次发布前运行 `npm.cmd run verify`；数据模型变更必须附带显式迁移、回滚方案和测试。
 - 回退 Worker 代码不能自动回退 D1 数据。变更数据结构前先验证恢复路径。

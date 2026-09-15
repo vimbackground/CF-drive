@@ -43,12 +43,56 @@ test('WebDAV is enabled only by the explicit true value', () => {
   assert.equal(isWebDavEnabled({}), false);
 });
 
-test('main application fails closed when required security secrets are missing', async () => {
+test('uninitialized application fails closed until an owner public key is configured', async () => {
   const env = webDavEnvironment();
   delete env.ACCESS_PASSWORD;
   const response = await worker.fetch(new Request('https://drive.example/'), env, { waitUntil() {} });
-  assert.equal(response.status, 500);
-  assert.match(await response.text(), /ACCESS_PASSWORD/);
+  assert.equal(response.status, 503);
+  assert.match(await response.text(), /BOOTSTRAP_OWNER_PUBLIC_KEY/);
+});
+
+test('owner-signed setup stores configuration in D1 and enables password login', async () => {
+  const env = webDavEnvironment();
+  delete env.ACCESS_PASSWORD;
+  delete env.SHARE_SECRET;
+  const owner = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
+  const publicJwk = await crypto.subtle.exportKey('jwk', owner.publicKey);
+  env.BOOTSTRAP_OWNER_PUBLIC_KEY = Buffer.from(JSON.stringify(publicJwk)).toString('base64url');
+  const ctx = { waitUntil() {} };
+
+  const challengeResponse = await worker.fetch(new Request('https://drive.example/api/setup/challenge'), env, ctx);
+  assert.equal(challengeResponse.status, 200);
+  const challenge = await challengeResponse.json();
+  const signature = await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, owner.privateKey, new TextEncoder().encode(challenge.message));
+  const claim = await worker.fetch(new Request('https://drive.example/api/setup/claim', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      nonce: challenge.nonce,
+      signature: Buffer.from(signature).toString('base64url'),
+      password: 'a-long-initial-admin-password',
+      siteTitle: 'My CF-drive'
+    })
+  }), env, ctx);
+  assert.equal(claim.status, 200);
+  assert.equal((await claim.json()).ok, true);
+
+  const login = await worker.fetch(apiRequest('POST', '/api/login', { password: 'a-long-initial-admin-password' }), env, ctx);
+  assert.equal(login.status, 200);
+  const cookie = login.headers.get('Set-Cookie').split(';', 1)[0];
+  const settings = await worker.fetch(apiRequest('GET', '/api/settings', undefined, cookie), env, ctx);
+  assert.equal(settings.status, 200);
+  assert.equal((await settings.json()).settings.siteTitle, 'My CF-drive');
+
+  const updated = await worker.fetch(apiRequest('PUT', '/api/settings', {
+    siteTitle: 'Configured CF-drive',
+    webdav: { enabled: true, username: 'configured-dav', password: 'a-long-webdav-password', maxUploadBytes: 104857600 }
+  }, cookie), env, ctx);
+  assert.equal(updated.status, 200);
+  const dav = await worker.fetch(new Request('https://drive.example/dav/', {
+    method: 'OPTIONS', headers: { Authorization: `Basic ${btoa('configured-dav:a-long-webdav-password')}` }
+  }), env, ctx);
+  assert.equal(dav.status, 204);
 });
 
 test('HTML responses use the centralized security and no-cache policy', async () => {
