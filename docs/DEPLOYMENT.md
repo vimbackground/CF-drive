@@ -1,6 +1,6 @@
 # CF-drive 全新部署与安全验收
 
-本手册仅适用于全新实例。默认 Worker、R2 桶和 D1 数据库名称均为 `cf-drive`。不要连接旧项目的 R2、D1 或密钥。
+本手册仅适用于全新实例。Worker 名称为 `cf-drive`；首次 Cloudflare Workers Builds 部署会自动创建并绑定新的 R2 桶和 D1 数据库。资源名称由 Cloudflare 生成，并以 `cf-drive` 为前缀。不要把旧项目的 R2、D1 或密钥接入本项目。
 
 ## 1. 部署前检查
 
@@ -13,29 +13,19 @@
 npm.cmd run verify
 ```
 
-## 2. 创建资源
+## 2. 自动创建资源
 
-使用 Wrangler：
+仓库已提交 `wrangler.toml`，其中只声明 `R2_BUCKET` 与 `DB` 绑定，不含 R2 桶名、D1 数据库名或 D1 ID。首次运行 Cloudflare Workers Builds 的 `npx wrangler deploy` 时，Cloudflare 自动创建并绑定资源。
 
-```powershell
-npx wrangler login
-npx wrangler r2 bucket create cf-drive
-npx wrangler d1 create cf-drive
-```
+不要手动创建同名 R2/D1，也不要在 `wrangler.toml` 填入既有资源名称或 ID；这样会将新实例绑定到手工资源，偏离自动创建流程。首次部署完成后，可在 Cloudflare Dashboard 的 R2 与 D1 页面查看 Cloudflare 生成的资源及其绑定。
 
-记录 D1 创建命令输出中的 `database_id`。如果同名资源已经存在，先确认它确实属于本次新部署；否则改用新的明确名称，并同步更新配置。不要删除或覆盖来源不明的资源。
+## 3. 保持部署配置
 
-## 3. 创建部署配置
-
-```powershell
-Copy-Item .\wrangler.toml.example .\wrangler.toml
-```
-
-保留默认 R2/D1 名称，将 `database_id` 替换为上一步取得的 UUID。`wrangler.toml` 不包含密钥，可以提交至 Git；`.dev.vars`、`.env` 和任何真实凭据不能提交。
+`wrangler.toml` 不包含密钥，应随代码提交；`.dev.vars`、`.env` 和任何真实凭据不能提交。
 
 ## 4. 配置运行时 Secret
 
-在 **Workers & Pages > cf-drive > Settings > Variables and Secrets** 添加：
+首次部署创建 Worker 后，在 **Workers & Pages > cf-drive > Settings > Variables and Secrets** 添加：
 
 | 名称 | 类型 | 要求 |
 | --- | --- | --- |
@@ -52,6 +42,7 @@ Copy-Item .\wrangler.toml.example .\wrangler.toml
 按 [Cloudflare + GitHub 自动部署教程](./GITHUB_CLOUDFLARE_DEPLOYMENT.md) 设置 Cloudflare Workers Builds。首次发布前须确认：
 
 - Cloudflare 中的 Worker 名称与 `wrangler.toml` 的 `name` 都是 `cf-drive`。
+- 首次部署结束后，在 R2 与 D1 页面确认已创建新的、以 `cf-drive` 为前缀的资源。
 - `main` 是唯一生产分支。
 - Build command 为 `npm run verify`。
 - Deploy command 为 `npx wrangler deploy`。

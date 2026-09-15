@@ -9,7 +9,7 @@
 
 ## new_vocabulary
 
-- Workers Builds, Git integration, production branch, non-production branch builds, build command, deploy command, runtime secrets, D1 `database_id`, R2 binding.
+- Workers Builds, Git integration, production branch, non-production branch builds, build command, deploy command, runtime secrets, automatic R2/D1 provisioning, and bindings.
 
 ## new_entities
 

@@ -1,18 +1,14 @@
-# Copy this file to wrangler.toml. It contains no secrets and should be committed
-# when using Cloudflare Workers Builds. Replace only the D1 database ID.
+# Cloudflare Workers Builds provisions R2 and D1 on the first deploy.
+# Do not add resource names or IDs here: they would opt out of this fresh-instance flow.
 name = "cf-drive"
 main = "worker.js"
 compatibility_date = "2026-09-15"
 
 [[r2_buckets]]
 binding = "R2_BUCKET"
-bucket_name = "cf-drive"
 
 [[d1_databases]]
 binding = "DB"
-database_name = "cf-drive"
-# D1 creates this immutable ID when the database is first created.
-database_id = "replace-with-your-d1-database-id"
 
 [vars]
 # Keep WebDAV disabled during the first deployment smoke test.

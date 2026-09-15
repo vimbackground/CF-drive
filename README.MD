@@ -20,17 +20,16 @@
 
 ## 快速开始
 
-默认 Worker、R2 桶和 D1 数据库名称均为 `cf-drive`。
+Worker 名称为 `cf-drive`。首次 GitHub 部署会自动创建并绑定新的 R2 桶与 D1 数据库；资源名称由 Cloudflare 生成，均以 `cf-drive` 为前缀。
 
-1. 复制 [wrangler.toml.example](./wrangler.toml.example) 为 `wrangler.toml`，填写新建 D1 的 `database_id`。
-2. 在 Cloudflare 为 Worker 配置 `ACCESS_PASSWORD` 和 `SHARE_SECRET` 两个 Secret。
-3. 执行本地验证：
+1. 保持仓库中的 `wrangler.toml` 不变；它声明自动创建所需的 R2 与 D1 绑定。
+2. 执行本地验证：
 
 ```powershell
 npm.cmd run verify
 ```
 
-4. 按 [Cloudflare + GitHub 自动部署教程](./docs/GITHUB_CLOUDFLARE_DEPLOYMENT.md) 连接仓库并推送 `main`。
+3. 按 [Cloudflare + GitHub 自动部署教程](./docs/GITHUB_CLOUDFLARE_DEPLOYMENT.md) 连接仓库并推送 `main`；首次成功部署后，在 Cloudflare 为 Worker 配置 `ACCESS_PASSWORD` 和 `SHARE_SECRET` 两个 Secret。
 
 完整的资源、密钥和功能验收步骤见 [部署与安全手册](./docs/DEPLOYMENT.md)。
 
@@ -57,7 +56,7 @@ WebDAV 凭据不得复用管理员密码；详情与兼容范围见 [技术文�
 ```text
 .
 ├── worker.js                         # Worker、网页 UI、HTTP API、WebDAV
-├── wrangler.toml.example             # 不含密钥的部署配置模板
+├── wrangler.toml                     # 不含密钥；声明自动创建的 R2/D1 绑定
 ├── .dev.vars.example                 # 本地开发密钥模板
 ├── package.json                      # 本地检查和测试脚本
 ├── test/worker.test.mjs              # Node 内置回归测试

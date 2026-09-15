@@ -18,10 +18,9 @@ Cloudflare Workers Builds 的 Git 集成、构建命令和生产分支规则以 
 
 ## 一次性初始化
 
-1. 使用 [部署与安全手册](./DEPLOYMENT.md) 创建 R2 桶和 D1 数据库，默认名称均为 `cf-drive`。
-2. 将 D1 创建返回的 UUID 写入 `wrangler.toml` 的 `database_id`。
-3. 确认 `wrangler.toml` 中的 `name` 为 `cf-drive`，R2 绑定名为 `R2_BUCKET`，D1 绑定名为 `DB`。
-4. 提交不含密钥的代码、测试、文档和 `wrangler.toml`：
+1. 保持仓库中的 `wrangler.toml`：它只包含 `R2_BUCKET` 和 `DB` 的绑定名，首次部署时自动创建资源。
+2. 确认 `wrangler.toml` 中的 `name` 为 `cf-drive`，R2 绑定名为 `R2_BUCKET`，D1 绑定名为 `DB`；不要填入资源名称或 D1 ID。
+3. 提交不含密钥的代码、测试、文档和 `wrangler.toml`：
 
 ```powershell
 git add worker.js package.json wrangler.toml test README.MD docs
@@ -47,7 +46,7 @@ git push origin main
 | Deploy command | `npx wrangler deploy` |
 | Builds for non-production branches | 关闭 |
 
-Cloudflare 中的 Worker 名称必须与 `wrangler.toml` 的 `name` 一致，否则构建会失败。构建变量只在构建期间可见；`ACCESS_PASSWORD`、`SHARE_SECRET` 等运行时凭据必须在 **Settings > Variables and Secrets** 中设置为 Secret。
+Cloudflare 中的 Worker 名称必须与 `wrangler.toml` 的 `name` 一致，否则构建会失败。首次部署会自动创建 R2/D1；随后在资源页面确认生成的绑定。构建变量只在构建期间可见；`ACCESS_PASSWORD`、`SHARE_SECRET` 等运行时凭据必须在 **Settings > Variables and Secrets** 中设置为 Secret。
 
 ## 首次验证
 

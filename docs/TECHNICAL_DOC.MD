@@ -30,7 +30,7 @@
 | 文本变量 | `DOWNLOAD_RANGE_SIZE_MB` | 否，范围 1–32 | 分布式下载内部读取块大小。 |
 | 文本变量 | `SITE_TITLE`、`CLOUD_ICON_URL`、`LOGIN_BACKGROUND_URL` | 否 | 站点外观。 |
 
-真实 Secret 只放在 Cloudflare Worker Secrets 或本地忽略的 `.dev.vars`；`wrangler.toml` 可以提交，因为仅含绑定名、资源名和 D1 ID。
+真实 Secret 只放在 Cloudflare Worker Secrets 或本地忽略的 `.dev.vars`；`wrangler.toml` 可以提交，因为仅含绑定名。首次部署由 Cloudflare 自动创建并绑定新的 R2 与 D1，生成的资源 ID 不会写回 GitHub 仓库。
 
 ## 数据模型
 
