@@ -63,6 +63,6 @@ npm.cmd run verify
 
 - 在 Cloudflare WAF/Rate Limiting 对 `POST /api/login`、`POST /api/share-access`、`/dav/*` 设置按来源 IP 的边缘限速。
 - 使用自定义域名时强制 HTTPS；不要暴露不受 Cloudflare 管理的 HTTP 回源。
-- 所有者私钥泄露时应停止使用该实例并迁移到新的所有者密钥；应用内轮换管理员密码会使现有管理会话失效，轮换分享签名密钥会使分享授权 Cookie 失效。
+- 在首次认领前若所有者私钥泄露，应生成新密钥、更新公钥并重新部署；认领成功后该私钥不再参与运行时请求。应用内轮换管理员密码会使现有管理会话失效，轮换分享签名密钥会使分享授权 Cookie 失效。
 - 每次发布前运行 `npm.cmd run verify`；数据模型变更必须附带显式迁移、回滚方案和测试。
 - 回退 Worker 代码不能自动回退 D1 数据。变更数据结构前先验证恢复路径。
