@@ -1,0 +1,14 @@
+{
+  "name": "cf-drive",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "check": "node --check worker.js",
+    "test": "node --test test/worker.test.mjs",
+    "verify": "npm run check && npm run test"
+  }
+}

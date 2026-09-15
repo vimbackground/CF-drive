@@ -1,0 +1,6 @@
+claim_id	source	locator	note
+C1	https://developers.cloudflare.com/workers/ci-cd/builds/	Builds overview	Git connection enables automated builds and deployments on push.
+C2	https://developers.cloudflare.com/workers/ci-cd/builds/configuration/	How Workers Builds works	Optional build command precedes deploy command; production default deploy command is npx wrangler deploy.
+C3	https://developers.cloudflare.com/d1/get-started/	Create a database	D1 creation output includes binding, database name, and unique database ID.
+C4	https://developers.cloudflare.com/r2/api/workers/workers-api-usage/	Bind your bucket to a Worker	R2 Wrangler binding uses binding and bucket_name.
+C5	https://developers.cloudflare.com/workers/configuration/secrets/	Local Development with Secrets	Do not commit local secret files; use secrets rather than vars for sensitive values.

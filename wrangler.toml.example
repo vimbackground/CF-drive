@@ -1,0 +1,21 @@
+# Copy this file to wrangler.toml. It contains no secrets and should be committed
+# when using Cloudflare Workers Builds. Replace only the D1 database ID.
+name = "cf-drive"
+main = "worker.js"
+compatibility_date = "2026-09-15"
+
+[[r2_buckets]]
+binding = "R2_BUCKET"
+bucket_name = "cf-drive"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "cf-drive"
+# D1 creates this immutable ID when the database is first created.
+database_id = "replace-with-your-d1-database-id"
+
+[vars]
+# Keep WebDAV disabled during the first deployment smoke test.
+WEBDAV_ENABLED = "false"
+# This is a server-side request cap, not an R2 quota. Raise only after testing.
+WEBDAV_MAX_UPLOAD_BYTES = "104857600"
