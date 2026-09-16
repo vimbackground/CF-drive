@@ -7,8 +7,8 @@
 ## 当前实施边界
 
 - 已具备：受管节点接入与排空、manifest v2 的 Stripe 布局元数据与 `sha256-tree-v1` 内容摘要、持久化归集作业、主控 R2 复制、分段 SHA-256 校验、manifest 切换与源分片清理、暂停/继续/取消 API，以及需要管理员声明不同故障域的 Mirror 转换准备门禁。
-- 已具备：Stripe→Mirror 的持久化副本迁移、树摘要校验、CAS manifest 双 placement 写入与备用读取；全量作业完成前策略保持 `converting_to_mirror`。
-- 已具备：Mirror 新写入双写；主控和镜像节点均落盘且树摘要一致后才提交 manifest，镜像不可用时拒绝受保护写入。
+- 已具备：Stripe→Mirror 的持久化副本迁移：分布式分片使用树摘要校验与 CAS manifest 双 placement；普通文件复制至 B 并记录备用 placement；全量作业完成前策略保持 `converting_to_mirror`。
+- 已具备：Mirror 新写入双写；分布式文件在两端树摘要一致后才提交 manifest，普通与 multipart 文件也会在 B 确认落盘后才发布目录记录，镜像不可用时拒绝受保护写入。
 - 已具备：Mirror scrub；逐副本摘要校验失败会标记 `degraded`。
 - 已具备：Mirror repair；从主副本重建镜像 placement 并校验后 CAS 替换。
 - 已具备：Mirror 的新写入与 Stripe→Mirror 转换会把不含明文凭据的 manifest 副本写入 B；未来接管可据此定位 B 中的数据分片。

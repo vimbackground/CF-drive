@@ -5650,6 +5650,7 @@ function fileEntryFromR2Meta(path, storageKey, meta, overrides = {}) {
     contentType: overrides.contentType || meta?.httpMetadata?.contentType || getMimeType(clean),
     etag: overrides.etag || meta?.etag || '',
     storageType: overrides.storageType || (hasManifestMetadata(meta) ? 'distributed' : 'r2'),
+    mirrorReplica: overrides.mirrorReplica || undefined,
     createdAt: overrides.createdAt || uploaded,
     updatedAt: new Date().toISOString()
   };
@@ -6535,6 +6536,50 @@ async function syncMirrorManifestReplica(env, mirrorNode, sourceManifestKey, man
   return replicaKey;
 }
 
+async function copyR2ObjectToMirrorNode(env, R2, mirrorNode, sourceKey, targetKey, expectedSize) {
+  if (!mirrorNode?.id || !mirrorNode?.url || !mirrorNode?.token) throw new Error('mirror node is unavailable');
+  const source = await R2.get(sourceKey);
+  if (!source?.body || (Number.isFinite(Number(expectedSize)) && Number(expectedSize) > 0 && Number(source.size) !== Number(expectedSize))) {
+    throw new Error('primary object is unavailable for mirror replication');
+  }
+  const response = await fetch(mirrorNode.url.replace(/\/+$/, '') + '/api/node/part?key=' + encodeURIComponent(targetKey) + '&size=' + Number(source.size || 0), {
+    method: 'PUT', headers: getNodeAuthHeaders(mirrorNode), body: source.body
+  });
+  if (!response.ok) throw new Error('mirror object replication failed');
+}
+
+async function activeMirrorWriteNode(env, appConfig) {
+  const policy = normalizeStoragePolicy(appConfig?.storagePolicy);
+  if (policy.mode !== 'mirror') return null;
+  if (policy.status !== 'healthy' || !policy.mirrorNodeId) throw new Error('Mirror is degraded; protected writes are stopped');
+  const node = (await getStorageNodes(env, true)).find(value => value.id === policy.mirrorNodeId && value.enabled !== false && value.lifecycle === 'active');
+  if (!node) throw new Error('Mirror node is unavailable; protected writes are stopped');
+  return node;
+}
+
+async function mirrorFileReplicaResponse(request, env, entry, options = {}) {
+  const replica = entry?.mirrorReplica;
+  if (!replica?.nodeId || !replica?.key) return null;
+  const node = (await getStorageNodes(env, true)).find(value => value.id === replica.nodeId && value.enabled !== false);
+  if (!node) return null;
+  const headers = getNodeAuthHeaders(node);
+  const range = request.headers.get('Range');
+  if (range) headers.Range = range;
+  const response = await fetch(node.url.replace(/\/+$/, '') + '/api/node/part?key=' + encodeURIComponent(replica.key), { headers }).catch(() => null);
+  if (!response?.ok) return null;
+  const outputHeaders = fileResponseHeaders({
+    contentType: options.contentType || entry.contentType || getMimeType(entry.path),
+    filename: options.download === false ? '' : (options.filename || entry.name || virtualPathName(entry.path)),
+    size: Number(entry.size || 0),
+    range: response.status === 206 ? parseRangeHeader(range, Number(entry.size || 0)) : null
+  });
+  const contentRange = response.headers.get('Content-Range');
+  if (contentRange) outputHeaders.set('Content-Range', contentRange);
+  const contentLength = response.headers.get('Content-Length');
+  if (contentLength) outputHeaders.set('Content-Length', contentLength);
+  return new Response(request.method === 'HEAD' ? null : response.body, { status: response.status, headers: outputHeaders });
+}
+
 function manifestPartReplicas(part) {
   if (Array.isArray(part?.replicas) && part.replicas.length) return part.replicas;
   // v1 fields remain the source of truth for old manifests.
@@ -6824,6 +6869,12 @@ async function createMirrorConversionJob(env, R2, forceRepair = false) {
     }
     cursor = listed.cursor;
   } while (cursor);
+  for (const key of await kvListKeys(env, FS_FILE_PREFIX)) {
+    const entry = await kvGetJson(env, key);
+    if (!entry?.storageKey || entry.storageType === 'distributed') continue;
+    if (!forceRepair && entry.mirrorReplica?.nodeId === policy.mirrorNodeId && entry.mirrorReplica?.key) continue;
+    items.push({ kind: 'file', filePath: entry.path, storageKey: entry.storageKey, size: Number(entry.size || 0), status: 'pending', error: '' });
+  }
   const now = new Date().toISOString();
   const job = { id: crypto.randomUUID(), type: forceRepair ? 'mirror-repair' : 'convert-stripe-to-mirror', nodeId: policy.mirrorNodeId, forceRepair, status: items.length ? 'queued' : 'completed', items, totalBytes: items.reduce((sum, item) => sum + item.size, 0), completedBytes: 0, createdAt: now, updatedAt: now, error: '' };
   if (!forceRepair && !items.length) {
@@ -6852,13 +6903,27 @@ async function runMirrorConversionJob(env, R2, jobId) {
   }
   job.status = 'copying'; item.status = 'copying';
   try {
-    const object = await R2.get(item.manifestKey);
-    const manifest = await readManifestObject(object);
-    const sourcePart = manifest?.parts?.find(part => part.partId === item.partId || (!item.partId && part.partNumber === item.partNumber));
-    if (!sourcePart) throw new Error('manifest part no longer exists');
-    if (!job.forceRepair && manifestPartReplicas(sourcePart).some(replica => (replica.storageId || replica.nodeId) === mirrorNode.id)) {
-      item.status = 'completed';
+    if (item.kind === 'file') {
+      const entry = await getFileEntry(env, item.filePath);
+      if (!entry || entry.storageKey !== item.storageKey) {
+        item.status = 'completed';
+        item.error = 'file changed while queued';
+      } else if (!job.forceRepair && entry.mirrorReplica?.nodeId === mirrorNode.id && entry.mirrorReplica?.key) {
+        item.status = 'completed';
+      } else {
+        const targetKey = nodePartPrefix(env.INSTANCE_ID || 'legacy-controller') + 'mirror_file_' + job.id.replace(/-/g, '') + '_' + await sha256Hex(item.storageKey);
+        await copyR2ObjectToMirrorNode(env, R2, mirrorNode, entry.storageKey, targetKey, entry.size);
+        await putFileEntry(env, { ...entry, mirrorReplica: { nodeId: mirrorNode.id, key: targetKey, state: 'healthy' } });
+        item.status = 'completed'; item.error = '';
+      }
     } else {
+      const object = await R2.get(item.manifestKey);
+      const manifest = await readManifestObject(object);
+      const sourcePart = manifest?.parts?.find(part => part.partId === item.partId || (!item.partId && part.partNumber === item.partNumber));
+      if (!sourcePart) throw new Error('manifest part no longer exists');
+      if (!job.forceRepair && manifestPartReplicas(sourcePart).some(replica => (replica.storageId || replica.nodeId) === mirrorNode.id)) {
+      item.status = 'completed';
+      } else {
       const [resolvedSource] = await resolveManifestParts({ parts: [sourcePart] }, env);
       const targetKey = nodePartPrefix(env.INSTANCE_ID || 'legacy-controller') + 'mirror_' + job.id.replace(/-/g, '') + '_' + String(item.partNumber).padStart(6, '0');
       const copied = await fetch(mirrorNode.url.replace(/\/+$/, '') + '/api/node/part?key=' + encodeURIComponent(targetKey) + '&size=' + item.size, { method: 'PUT', headers: getNodeAuthHeaders(mirrorNode), body: await openPartStream(R2, resolvedSource) });
@@ -6873,6 +6938,7 @@ async function runMirrorConversionJob(env, R2, jobId) {
       await syncMirrorManifestReplica(env, mirrorNode, item.manifestKey, manifest);
       await putManifestCas(R2, item.manifestKey, object?.etag, manifest);
       item.status = 'completed'; item.error = '';
+      }
     }
     job.completedBytes = job.items.filter(value => value.status === 'completed').reduce((sum, value) => sum + Number(value.size || 0), 0);
     if (job.items.every(value => value.status === 'completed')) {
@@ -7064,11 +7130,14 @@ async function storedVirtualFileResponse(request, R2, path, env, options = {}) {
   const clean = assertVirtualPath(path);
   const entry = await getFileEntry(env, clean);
   if (!entry) return new Response(options.notFoundText || 'File not found', { status: 404 });
-  return storedFileResponse(request, R2, entry.storageKey, env, {
+  const responseOptions = {
     ...options,
     filename: options.download === false ? '' : (options.filename || entry.name || virtualPathName(clean)),
     contentType: options.contentType || entry.contentType || getMimeType(clean)
-  });
+  };
+  const primary = await storedFileResponse(request, R2, entry.storageKey, env, responseOptions);
+  if (primary.status !== 404) return primary;
+  return await mirrorFileReplicaResponse(request, env, entry, responseOptions) || primary;
 }
 
 async function resolveManifestParts(manifest, env) {
@@ -8616,10 +8685,27 @@ export default {
       const cleanPath = assertVirtualPath(filePath);
       const mime = getMimeType(filePath);
       const storageKey = await createStorageKeyForPath(env, R2, cleanPath, 'file');
-      const object = await R2.put(storageKey, request.body, { httpMetadata: { contentType: mime } });
+      const mirrorNode = await activeMirrorWriteNode(env, appConfig);
+      const mirrorKey = mirrorNode ? nodePartPrefix(appConfig.instanceId || 'legacy-controller') + 'mirror_file_' + crypto.randomUUID().replace(/-/g, '') : '';
+      let object;
+      if (mirrorNode) {
+        if (!request.body) return new Response('Missing upload body', { status: 400 });
+        const [primaryBody, mirrorBody] = request.body.tee();
+        const [primaryObject, mirrored] = await Promise.all([
+          R2.put(storageKey, primaryBody, { httpMetadata: { contentType: mime } }),
+          fetch(mirrorNode.url.replace(/\/+$/, '') + '/api/node/part?key=' + encodeURIComponent(mirrorKey), { method: 'PUT', headers: getNodeAuthHeaders(mirrorNode), body: mirrorBody })
+        ]);
+        if (!primaryObject || !mirrored.ok) return new Response('Mirror file write failed', { status: 502 });
+        const mirrorMeta = await fetch(mirrorNode.url.replace(/\/+$/, '') + '/api/node/part?key=' + encodeURIComponent(mirrorKey), { method: 'HEAD', headers: getNodeAuthHeaders(mirrorNode) });
+        if (!mirrorMeta.ok || Number(mirrorMeta.headers.get('Content-Length') || -1) !== Number(primaryObject.size)) return new Response('Mirror file verification failed', { status: 502 });
+        object = primaryObject;
+      } else {
+        object = await R2.put(storageKey, request.body, { httpMetadata: { contentType: mime } });
+      }
       await replaceFileEntry(env, R2, fileEntryFromR2Meta(cleanPath, storageKey, object, {
         contentType: mime,
-        storageType: 'r2'
+        storageType: 'r2',
+        mirrorReplica: mirrorNode ? { nodeId: mirrorNode.id, key: mirrorKey, state: 'healthy' } : undefined
       }));
       return Response.json({ ok: true });
     }
@@ -8631,12 +8717,15 @@ export default {
       const cleanPath = assertVirtualPath(filePath);
       const mime = contentType || getMimeType(filePath);
       const storageKey = await createStorageKeyForPath(env, R2, cleanPath, 'multipart');
+      const mirrorNode = await activeMirrorWriteNode(env, appConfig);
       const upload = await R2.createMultipartUpload(storageKey, { httpMetadata: { contentType: mime } });
       await kvPutRaw(env, R2_MULTIPART_SESSION_PREFIX + upload.uploadId, JSON.stringify({
         path: cleanPath,
         storageKey,
         contentType: mime,
-        createdAt: new Date().toISOString()
+        createdAt: new Date().toISOString(),
+        mirrorNodeId: mirrorNode?.id || '',
+        mirrorKey: mirrorNode ? nodePartPrefix(appConfig.instanceId || 'legacy-controller') + 'mirror_file_' + crypto.randomUUID().replace(/-/g, '') : ''
       }), { expirationTtl: 86400 });
       return Response.json({ key: upload.key, uploadId: upload.uploadId });
     }
@@ -8668,10 +8757,17 @@ export default {
       if (assertVirtualPath(filePath) !== session.path) return new Response('Multipart path mismatch', { status: 400 });
       const upload = R2.resumeMultipartUpload(session.storageKey, uploadId);
       const object = await upload.complete(parts);
+      let mirrorReplica;
+      if (session.mirrorNodeId) {
+        const mirrorNode = (await getStorageNodes(env, true)).find(node => node.id === session.mirrorNodeId && node.enabled !== false && node.lifecycle === 'active');
+        await copyR2ObjectToMirrorNode(env, R2, mirrorNode, session.storageKey, session.mirrorKey, object.size);
+        mirrorReplica = { nodeId: mirrorNode.id, key: session.mirrorKey, state: 'healthy' };
+      }
       await replaceFileEntry(env, R2, fileEntryFromR2Meta(session.path, session.storageKey, object, {
         contentType: session.contentType,
         storageType: 'r2',
-        createdAt: session.createdAt
+        createdAt: session.createdAt,
+        mirrorReplica
       }));
       await kvDelete(env, R2_MULTIPART_SESSION_PREFIX + uploadId);
       return Response.json({ ok: true, key: object.key, etag: object.etag });

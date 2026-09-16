@@ -308,6 +308,10 @@ test('Mirror recovery snapshots are encrypted to the offline public key before B
     return originalFetch(input, init);
   };
   try {
+    const existingUpload = await worker.fetch(new Request('https://controller.example/api/upload?path=recovery/preexisting.txt', {
+      method: 'POST', headers: { Cookie: controller.cookie, 'X-R2Drive-CSRF': 'same-origin', 'Content-Type': 'text/plain' }, body: 'pre-existing stripe file'
+    }), controller.env, ctx);
+    assert.equal(existingUpload.status, 200);
     const codeResponse = await worker.fetch(apiRequest('POST', '/api/node-admin/enrollment', undefined, node.cookie), node.env, ctx);
     const { code } = await codeResponse.json();
     const enrolled = await worker.fetch(apiRequest('POST', '/api/storage-nodes/enroll', {
@@ -330,6 +334,12 @@ test('Mirror recovery snapshots are encrypted to the offline public key before B
     assert.equal(prepared.status, 202);
     const converted = await worker.fetch(apiRequest('POST', '/api/storage-policy/convert/run', undefined, controller.cookie), controller.env, ctx);
     assert.equal(converted.status, 202);
+    const conversionJob = (await converted.json()).job;
+    const conversionRun = await worker.fetch(apiRequest('POST', '/api/storage-jobs/' + encodeURIComponent(conversionJob.id) + '/run', undefined, controller.cookie), controller.env, ctx);
+    assert.equal(conversionRun.status, 200, await conversionRun.clone().text());
+    assert.equal((await conversionRun.json()).job.status, 'completed');
+    const preexistingEntry = JSON.parse(controller.env.DB._rows.get('r2drive:fs:file:recovery/preexisting.txt').value);
+    assert.equal(preexistingEntry.mirrorReplica.nodeId, nodeId);
 
     const size = 600 * 1024;
     const initialized = await worker.fetch(apiRequest('POST', '/api/distributed/init', {
@@ -350,6 +360,19 @@ test('Mirror recovery snapshots are encrypted to the offline public key before B
     const mirrorManifest = await new Response((await node.env.R2_BUCKET.get(mirrorManifestKey)).body).json();
     assert.equal(mirrorManifest.recoverySourceManifestKey, sourceManifestKey);
     assert.equal(mirrorManifest.mode, 'mirror');
+
+    const simpleUpload = await worker.fetch(new Request('https://controller.example/api/upload?path=recovery/small.txt', {
+      method: 'POST', headers: { Cookie: controller.cookie, 'X-R2Drive-CSRF': 'same-origin', 'Content-Type': 'text/plain' }, body: 'mirrored small file'
+    }), controller.env, ctx);
+    assert.equal(simpleUpload.status, 200);
+    const simpleEntry = JSON.parse(controller.env.DB._rows.get('r2drive:fs:file:recovery/small.txt').value);
+    assert.equal(simpleEntry.mirrorReplica.nodeId, nodeId);
+    await controller.env.R2_BUCKET.delete(simpleEntry.storageKey);
+    const fallbackRead = await worker.fetch(new Request('https://controller.example/api/download?path=recovery/small.txt', {
+      headers: { Cookie: controller.cookie }
+    }), controller.env, ctx);
+    assert.equal(fallbackRead.status, 200);
+    assert.equal(await fallbackRead.text(), 'mirrored small file');
 
     const snapshot = await worker.fetch(apiRequest('POST', '/api/recovery/snapshot', undefined, controller.cookie), controller.env, ctx);
     assert.equal(snapshot.status, 202, await snapshot.clone().text());
