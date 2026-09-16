@@ -6514,6 +6514,27 @@ async function putManifestCas(R2, key, expectedEtag, manifest) {
   return result;
 }
 
+async function mirrorManifestReplicaKey(env, sourceManifestKey) {
+  return nodePartPrefix(env.INSTANCE_ID || 'legacy-controller') + 'mirror_manifest_' + await sha256Hex(sourceManifestKey);
+}
+
+async function syncMirrorManifestReplica(env, mirrorNode, sourceManifestKey, manifest) {
+  if (!mirrorNode?.id || !mirrorNode?.url || !mirrorNode?.token) throw new Error('mirror node is unavailable for manifest replication');
+  const replicaKey = await mirrorManifestReplicaKey(env, sourceManifestKey);
+  const payload = new TextEncoder().encode(JSON.stringify({
+    ...manifest,
+    recoverySourceManifestKey: sourceManifestKey,
+    recoveryManifestVersion: 1
+  }));
+  const response = await fetch(mirrorNode.url.replace(/\/+$/, '') + '/api/node/part?key=' + encodeURIComponent(replicaKey) + '&size=' + payload.byteLength, {
+    method: 'PUT',
+    headers: getNodeAuthHeaders(mirrorNode, { 'Content-Type': MANIFEST_CONTENT_TYPE }),
+    body: payload
+  });
+  if (!response.ok) throw new Error('mirror manifest replication failed');
+  return replicaKey;
+}
+
 function manifestPartReplicas(part) {
   if (Array.isArray(part?.replicas) && part.replicas.length) return part.replicas;
   // v1 fields remain the source of truth for old manifests.
@@ -6849,6 +6870,7 @@ async function runMirrorConversionJob(env, R2, jobId) {
       sourcePart.replicas = [...manifestPartReplicas(sourcePart).filter(replica => (replica.storageId || replica.nodeId) !== mirrorNode.id), { storageId: mirrorNode.id, nodeId: mirrorNode.id, storageType: 'node', key: targetKey, nodeName: mirrorNode.name, nodeUrl: mirrorNode.url, state: 'healthy' }];
       manifest.generation = Math.max(1, Number(manifest.generation) || 1) + 1;
       manifest.mode = manifest.parts.every(part => manifestPartReplicas(part).length >= 2) ? 'mirror' : 'stripe';
+      await syncMirrorManifestReplica(env, mirrorNode, item.manifestKey, manifest);
       await putManifestCas(R2, item.manifestKey, object?.etag, manifest);
       item.status = 'completed'; item.error = '';
     }
@@ -8856,7 +8878,7 @@ export default {
       if (!raw) return jsonResponse({ ok: false, error: 'session expired' }, 404);
       const session = JSON.parse(raw);
       const policy = publicStoragePolicy(appConfig?.storagePolicy);
-      if (policy.mode !== 'stripe') {
+      if (!['stripe', 'mirror'].includes(policy.mode)) {
         return jsonResponse({ ok: false, error: 'selected storage policy is not available for new uploads' }, 409);
       }
       let offset = 0;
@@ -8914,6 +8936,10 @@ export default {
           r2driveSize: String(session.size)
         }
       });
+      if (policy.mode === 'mirror') {
+        const mirrorNode = (await getStorageNodes(env, true)).find(node => node.id === policy.mirrorNodeId && node.enabled !== false && node.lifecycle === 'active');
+        await syncMirrorManifestReplica(env, mirrorNode, session.storageKey, manifest);
+      }
       await replaceFileEntry(env, R2, fileEntryFromR2Meta(session.path, session.storageKey, object, {
         size: session.size,
         contentType: session.contentType,

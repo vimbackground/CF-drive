@@ -235,7 +235,7 @@ test('one-time enrollment makes B a scoped managed node controlled by A', async 
 
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input, init) => {
-    const request = input instanceof Request ? input : new Request(input, init);
+    const request = input instanceof Request ? input : new Request(input, init?.body ? { ...init, duplex: 'half' } : init);
     if (new URL(request.url).origin === 'https://node.example') return worker.fetch(request, node.env, ctx);
     return originalFetch(input, init);
   };
@@ -303,7 +303,7 @@ test('Mirror recovery snapshots are encrypted to the offline public key before B
   const node = await initializedInstance('https://node.example', 'node-password', {}, ctx);
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input, init) => {
-    const request = input instanceof Request ? input : new Request(input, init);
+    const request = input instanceof Request ? input : new Request(input, init?.body ? { ...init, duplex: 'half' } : init);
     if (new URL(request.url).origin === 'https://node.example') return worker.fetch(request, node.env, ctx);
     return originalFetch(input, init);
   };
@@ -330,6 +330,26 @@ test('Mirror recovery snapshots are encrypted to the offline public key before B
     assert.equal(prepared.status, 202);
     const converted = await worker.fetch(apiRequest('POST', '/api/storage-policy/convert/run', undefined, controller.cookie), controller.env, ctx);
     assert.equal(converted.status, 202);
+
+    const size = 600 * 1024;
+    const initialized = await worker.fetch(apiRequest('POST', '/api/distributed/init', {
+      path: 'recovery/mirrored.bin', size, chunkSize: size, parts: 1, contentType: 'application/octet-stream'
+    }, controller.cookie), controller.env, ctx);
+    assert.equal(initialized.status, 200, await initialized.clone().text());
+    const uploadSession = await initialized.json();
+    const uploaded = await worker.fetch(new Request('https://controller.example' + uploadSession.parts[0].uploadUrl, {
+      method: 'PUT', headers: { Cookie: controller.cookie, 'X-R2Drive-CSRF': 'same-origin', 'Content-Length': String(size) }, body: new Uint8Array(size)
+    }), controller.env, ctx);
+    assert.equal(uploaded.status, 200, await uploaded.clone().text());
+    const completed = await worker.fetch(apiRequest('POST', '/api/distributed/complete', { sessionId: uploadSession.sessionId }, controller.cookie), controller.env, ctx);
+    assert.equal(completed.status, 200, await completed.clone().text());
+    const controllerObjects = await controller.env.R2_BUCKET.list({ include: ['customMetadata'] });
+    const sourceManifestKey = controllerObjects.objects.find(item => item.customMetadata.r2driveManifest === '1').key;
+    const mirrorObjects = await node.env.R2_BUCKET.list({ include: ['customMetadata'] });
+    const mirrorManifestKey = mirrorObjects.objects.find(item => item.key.includes('mirror_manifest_')).key;
+    const mirrorManifest = await new Response((await node.env.R2_BUCKET.get(mirrorManifestKey)).body).json();
+    assert.equal(mirrorManifest.recoverySourceManifestKey, sourceManifestKey);
+    assert.equal(mirrorManifest.mode, 'mirror');
 
     const snapshot = await worker.fetch(apiRequest('POST', '/api/recovery/snapshot', undefined, controller.cookie), controller.env, ctx);
     assert.equal(snapshot.status, 202, await snapshot.clone().text());
