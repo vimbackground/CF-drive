@@ -113,7 +113,7 @@
 | `DELETE /api/storage-nodes?id=<id>` | 仅在没有 manifest 分片引用时删除节点配置。 |
 | `POST /api/storage-nodes/test?id=<id>` | 检查 ping 与容量接口。 |
 | `GET /api/storage-nodes/r2-files?id=main&cursor=&limit=100` | 查看主控或指定节点对象；`limit` 范围 1–200。 |
-| `GET /api/storage-policy` | 返回当前存储策略及已实现能力；当前 Mirror 能力明确为不可用。 |
+| `GET /api/storage-policy` | 返回当前存储策略及已实现能力；`mirror.recovery` 仍表示完整接管能力，`mirror.recoverySnapshot` 表示已支持加密快照同步。 |
 | `POST /api/storage-policy/convert` | 以 `{targetMode:"mirror",mirrorNodeId,primaryFaultDomain,mirrorFaultDomain,confirm:"MIRROR"}` 进入转换准备；两个故障域必须由管理员声明且不同。 |
 | `POST /api/storage-policy/convert/run` | 创建 Stripe→Mirror 副本迁移作业；完成所有分片校验前策略保持 `converting_to_mirror`。 |
 | `GET /api/storage-jobs` | 列出持久化存储作业及其进度。 |
@@ -121,6 +121,9 @@
 | `POST /api/storage-jobs/<id>/pause\|resume\|cancel` | 暂停、继续或取消尚未完成的归集作业；取消不会删除源分片。 |
 | `POST /api/mirror/scrub` | 创建 Mirror 副本校验作业；摘要或副本布局异常会将策略标记为 `degraded`。 |
 | `POST /api/mirror/repair` | 创建 Mirror repair 作业；用主副本重建镜像 placement，校验后以 CAS 替换。 |
+| `GET /api/recovery/status` | 返回恢复公钥登记、集群 ID、快照提交序号及 B 确认序号；不返回公钥内容或任何私钥。 |
+| `POST /api/recovery/configure` | 以 `{confirm:"RECOVERY_PUBLIC_KEY",publicKeyJwk}` 登记离线保管的 P-256 ECDH 公钥。重新登记会使旧快照不再可用。 |
+| `POST /api/recovery/snapshot` | 仅在 Mirror 为 `healthy` 时生成完整控制面快照，以 ECDH-P256/AES-GCM 加密并同步至固定 B；尚不等同于灾备接管。 |
 
 新建 Stripe manifest 使用 `sha256-tree-v1:<hex>`：对每个不超过 8 MiB 的数据段做 SHA-256，再对顺序叶子摘要做根哈希。它避免将完整大分片加载到 Worker 内存，并用于归集前后的数据一致性核验。
 

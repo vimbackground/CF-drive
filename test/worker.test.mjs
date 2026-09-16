@@ -109,7 +109,9 @@ test('owner-signed setup stores configuration in D1 and enables password login',
   });
   const policy = await worker.fetch(apiRequest('GET', '/api/storage-policy', undefined, cookie), env, ctx);
   assert.equal(policy.status, 200);
-  assert.equal((await policy.json()).capabilities.mirror.write, false);
+  const policyBody = await policy.json();
+  assert.equal(policyBody.capabilities.mirror.write, true);
+  assert.equal(policyBody.capabilities.mirror.recovery, false);
   const invalidMirror = await worker.fetch(apiRequest('POST', '/api/storage-policy/convert', {
     targetMode: 'mirror', confirm: 'MIRROR', primaryFaultDomain: 'account-a', mirrorFaultDomain: 'account-a', mirrorNodeId: 'missing'
   }, cookie), env, ctx);
@@ -290,6 +292,53 @@ test('one-time enrollment makes B a scoped managed node controlled by A', async 
     const redirected = await worker.fetch(new Request('https://node.example/'), node.env, ctx);
     assert.equal(redirected.status, 302);
     assert.equal(redirected.headers.get('Location'), 'https://drive.example/');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('Mirror recovery snapshots are encrypted to the offline public key before B stores them', async () => {
+  const ctx = { waitUntil() {} };
+  const controller = await initializedInstance('https://controller.example', 'controller-password', { NODE_CREDENTIAL_KEK: 'controller-test-kek' }, ctx);
+  const node = await initializedInstance('https://node.example', 'node-password', {}, ctx);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    if (new URL(request.url).origin === 'https://node.example') return worker.fetch(request, node.env, ctx);
+    return originalFetch(input, init);
+  };
+  try {
+    const codeResponse = await worker.fetch(apiRequest('POST', '/api/node-admin/enrollment', undefined, node.cookie), node.env, ctx);
+    const { code } = await codeResponse.json();
+    const enrolled = await worker.fetch(apiRequest('POST', '/api/storage-nodes/enroll', {
+      name: 'Mirror B', url: 'https://node.example', enrollmentCode: code
+    }, controller.cookie), controller.env, ctx);
+    assert.equal(enrolled.status, 200);
+    const nodes = await worker.fetch(apiRequest('GET', '/api/storage-nodes', undefined, controller.cookie), controller.env, ctx);
+    const nodeId = (await nodes.json()).nodes[0].id;
+
+    const recoveryKey = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveKey', 'deriveBits']);
+    const publicKeyJwk = await crypto.subtle.exportKey('jwk', recoveryKey.publicKey);
+    const configured = await worker.fetch(apiRequest('POST', '/api/recovery/configure', {
+      confirm: 'RECOVERY_PUBLIC_KEY', publicKeyJwk
+    }, controller.cookie), controller.env, ctx);
+    assert.equal(configured.status, 200);
+
+    const prepared = await worker.fetch(apiRequest('POST', '/api/storage-policy/convert', {
+      targetMode: 'mirror', confirm: 'MIRROR', primaryFaultDomain: 'account-a', mirrorFaultDomain: 'account-b', mirrorNodeId: nodeId
+    }, controller.cookie), controller.env, ctx);
+    assert.equal(prepared.status, 202);
+    const converted = await worker.fetch(apiRequest('POST', '/api/storage-policy/convert/run', undefined, controller.cookie), controller.env, ctx);
+    assert.equal(converted.status, 202);
+
+    const snapshot = await worker.fetch(apiRequest('POST', '/api/recovery/snapshot', undefined, controller.cookie), controller.env, ctx);
+    assert.equal(snapshot.status, 202, await snapshot.clone().text());
+    const snapshotBody = await snapshot.json();
+    assert.equal(snapshotBody.recovery.snapshotCurrent, true);
+    const stored = node.env.DB._rows.get('r2drive:recovery:package:' + snapshotBody.snapshot.clusterId).value;
+    assert.doesNotMatch(stored, /r2drive:app:config:v1/);
+    assert.doesNotMatch(stored, /controller-password/);
+    assert.match(stored, /ECDH-P256\/A256GCM/);
   } finally {
     globalThis.fetch = originalFetch;
   }

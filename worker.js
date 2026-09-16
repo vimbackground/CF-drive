@@ -3833,6 +3833,9 @@ const SESSION_COOKIE = 'r2drive_session';
 const SESSION_DURATION = 7 * 24 * 60 * 60 * 1000;
 const STORAGE_NODES_KV_KEY = 'storage_nodes';
 const STORAGE_JOBS_KV_KEY = 'r2drive:storage-jobs:v1';
+const RECOVERY_PACKAGE_PREFIX = 'r2drive:recovery:package:';
+const RECOVERY_PACKAGE_VERSION = 1;
+const RECOVERY_PACKAGE_MAX_BYTES = 8 * 1024 * 1024;
 const STORAGE_JOB_VERIFY_CHUNK_BYTES = 8 * 1024 * 1024;
 const NODE_ENROLLMENT_PREFIX = 'r2drive:node-enrollment:';
 const NODE_ENROLLMENT_TTL_SECONDS = 10 * 60;
@@ -4623,8 +4626,35 @@ function defaultStoragePolicy() {
   };
 }
 
+function normalizeRecoveryConfig(value) {
+  const recovery = value && typeof value === 'object' ? value : {};
+  return {
+    publicKeyJwk: recovery.publicKeyJwk && typeof recovery.publicKeyJwk === 'object' ? recovery.publicKeyJwk : null,
+    algorithm: recovery.algorithm === 'ECDH-P256' ? 'ECDH-P256' : '',
+    fingerprint: String(recovery.fingerprint || ''),
+    clusterId: /^[a-zA-Z0-9_-]{16,128}$/.test(String(recovery.clusterId || '')) ? String(recovery.clusterId) : '',
+    commitSequence: Math.max(0, Math.floor(Number(recovery.commitSequence) || 0)),
+    syncedCommitSequence: Math.max(0, Math.floor(Number(recovery.syncedCommitSequence) || 0)),
+    lastSnapshotAt: String(recovery.lastSnapshotAt || ''),
+    lastSyncedAt: String(recovery.lastSyncedAt || ''),
+    updatedAt: String(recovery.updatedAt || '')
+  };
+}
+
 function publicRecoveryConfig(value) {
-  return { configured: !!value?.publicKeyJwk, algorithm: value?.algorithm || '', fingerprint: value?.fingerprint || '', updatedAt: value?.updatedAt || '' };
+  const recovery = normalizeRecoveryConfig(value);
+  return {
+    configured: !!recovery.publicKeyJwk,
+    algorithm: recovery.algorithm,
+    fingerprint: recovery.fingerprint,
+    clusterId: recovery.clusterId,
+    commitSequence: recovery.commitSequence,
+    syncedCommitSequence: recovery.syncedCommitSequence,
+    snapshotCurrent: recovery.commitSequence > 0 && recovery.commitSequence === recovery.syncedCommitSequence,
+    lastSnapshotAt: recovery.lastSnapshotAt,
+    lastSyncedAt: recovery.lastSyncedAt,
+    updatedAt: recovery.updatedAt
+  };
 }
 
 function normalizeStoragePolicy(value) {
@@ -4667,7 +4697,11 @@ async function getAppConfig(env) {
     changed = true;
   }
   if (!Array.isArray(next.managedNode.controllers)) { next.managedNode.controllers = []; changed = true; }
-  if (!next.recovery || typeof next.recovery !== 'object') { next.recovery = { publicKeyJwk: null, algorithm: '', fingerprint: '', updatedAt: '' }; changed = true; }
+  const normalizedRecovery = normalizeRecoveryConfig(next.recovery);
+  if (JSON.stringify(next.recovery || {}) !== JSON.stringify(normalizedRecovery)) {
+    next.recovery = normalizedRecovery;
+    changed = true;
+  }
   const normalizedPolicy = normalizeStoragePolicy(next.storagePolicy);
   if (JSON.stringify(next.storagePolicy || {}) !== JSON.stringify(normalizedPolicy)) {
     next.storagePolicy = normalizedPolicy;
@@ -4690,6 +4724,113 @@ async function insertAppConfig(env, config) {
 
 async function saveAppConfig(env, config) {
   await kvPutJson(env, APP_CONFIG_KEY, config);
+}
+
+function recoveryRecordPrefixes() {
+  return [FS_FILE_PREFIX, FS_FOLDER_PREFIX, FS_DIR_PREFIX, SHARE_LINK_PREFIX, BACKUP_DIRS_PREFIX, STORAGE_NODE_USAGE_PREFIX];
+}
+
+function isRecoveryRecordKey(key) {
+  return key === APP_CONFIG_KEY || key === STORAGE_NODES_KV_KEY || key === STORAGE_JOBS_KV_KEY ||
+    recoveryRecordPrefixes().some(prefix => key.startsWith(prefix));
+}
+
+async function collectRecoveryRecords(env) {
+  const keys = new Set([APP_CONFIG_KEY, STORAGE_NODES_KV_KEY, STORAGE_JOBS_KV_KEY]);
+  for (const prefix of recoveryRecordPrefixes()) {
+    for (const key of await kvListKeys(env, prefix)) keys.add(key);
+  }
+  const records = [];
+  for (const key of [...keys].filter(isRecoveryRecordKey).sort()) {
+    const value = await kvGetRaw(env, key);
+    if (value !== null) records.push({ key, value: String(value) });
+  }
+  return records;
+}
+
+async function encryptRecoverySnapshot(recovery, snapshot) {
+  const publicKey = await crypto.subtle.importKey('jwk', recovery.publicKeyJwk, { name: 'ECDH', namedCurve: 'P-256' }, false, []);
+  const ephemeral = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveKey']);
+  const key = await crypto.subtle.deriveKey({ name: 'ECDH', public: publicKey }, ephemeral.privateKey, { name: 'AES-GCM', length: 256 }, false, ['encrypt']);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const additionalData = new TextEncoder().encode(`cf-drive:recovery:v1:${snapshot.clusterId}:${snapshot.commitSequence}`);
+  const plaintext = new TextEncoder().encode(JSON.stringify(snapshot));
+  if (plaintext.byteLength > RECOVERY_PACKAGE_MAX_BYTES) throw new Error('recovery snapshot exceeds the package size limit');
+  const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData }, key, plaintext);
+  return {
+    version: RECOVERY_PACKAGE_VERSION,
+    algorithm: 'ECDH-P256/A256GCM',
+    clusterId: snapshot.clusterId,
+    commitSequence: snapshot.commitSequence,
+    createdAt: snapshot.createdAt,
+    ephemeralPublicKeyJwk: await crypto.subtle.exportKey('jwk', ephemeral.publicKey),
+    iv: base64UrlEncode(iv),
+    ciphertext: base64UrlEncode(ciphertext)
+  };
+}
+
+async function validateRecoveryPackage(value) {
+  if (!value || typeof value !== 'object') throw new Error('invalid recovery package');
+  if (Number(value.version) !== RECOVERY_PACKAGE_VERSION || value.algorithm !== 'ECDH-P256/A256GCM') throw new Error('unsupported recovery package');
+  if (!/^[a-zA-Z0-9_-]{16,128}$/.test(String(value.clusterId || ''))) throw new Error('invalid recovery cluster ID');
+  if (!Number.isSafeInteger(Number(value.commitSequence)) || Number(value.commitSequence) < 1) throw new Error('invalid recovery commit sequence');
+  if (!Number.isFinite(Date.parse(value.createdAt || ''))) throw new Error('invalid recovery package timestamp');
+  const encoded = JSON.stringify(value);
+  if (new TextEncoder().encode(encoded).byteLength > RECOVERY_PACKAGE_MAX_BYTES) throw new Error('recovery package exceeds the size limit');
+  const iv = base64UrlDecode(value.iv);
+  const ciphertext = base64UrlDecode(value.ciphertext);
+  if (iv.byteLength !== 12 || ciphertext.byteLength < 17) throw new Error('invalid recovery package ciphertext');
+  await crypto.subtle.importKey('jwk', value.ephemeralPublicKeyJwk, { name: 'ECDH', namedCurve: 'P-256' }, false, []);
+  return {
+    version: RECOVERY_PACKAGE_VERSION,
+    algorithm: 'ECDH-P256/A256GCM',
+    clusterId: String(value.clusterId),
+    commitSequence: Number(value.commitSequence),
+    createdAt: String(value.createdAt),
+    ephemeralPublicKeyJwk: value.ephemeralPublicKeyJwk,
+    iv: String(value.iv),
+    ciphertext: String(value.ciphertext)
+  };
+}
+
+async function synchronizeRecoverySnapshot(env, appConfig) {
+  const policy = normalizeStoragePolicy(appConfig.storagePolicy);
+  const recovery = normalizeRecoveryConfig(appConfig.recovery);
+  if (!recovery.publicKeyJwk || recovery.algorithm !== 'ECDH-P256') throw new Error('recovery public key is not configured');
+  if (policy.mode !== 'mirror' || policy.status !== 'healthy' || !policy.mirrorNodeId) throw new Error('a healthy Mirror policy is required before syncing recovery state');
+  const mirrorNode = (await getStorageNodes(env, true)).find(node => node.id === policy.mirrorNodeId && node.enabled !== false && node.lifecycle === 'active');
+  if (!mirrorNode) throw new Error('mirror node is unavailable');
+  const now = new Date().toISOString();
+  const nextRecovery = {
+    ...recovery,
+    clusterId: recovery.clusterId || crypto.randomUUID().replace(/-/g, ''),
+    commitSequence: recovery.commitSequence + 1,
+    lastSnapshotAt: now,
+    updatedAt: now
+  };
+  appConfig.recovery = nextRecovery;
+  await saveAppConfig(env, appConfig);
+  const snapshot = {
+    version: RECOVERY_PACKAGE_VERSION,
+    clusterId: nextRecovery.clusterId,
+    commitSequence: nextRecovery.commitSequence,
+    createdAt: now,
+    records: await collectRecoveryRecords(env)
+  };
+  const recoveryPackage = await encryptRecoverySnapshot(nextRecovery, snapshot);
+  const response = await fetch(mirrorNode.url.replace(/\/+$/, '') + '/api/node/recovery-package', {
+    method: 'POST',
+    headers: getNodeAuthHeaders(mirrorNode, { 'Content-Type': 'application/json' }),
+    body: JSON.stringify(recoveryPackage)
+  });
+  if (!response.ok) throw new Error('mirror node did not acknowledge the recovery package');
+  const acknowledgement = await response.json().catch(() => ({}));
+  if (acknowledgement.clusterId !== nextRecovery.clusterId || Number(acknowledgement.commitSequence) !== nextRecovery.commitSequence) {
+    throw new Error('mirror node acknowledgement did not match the recovery package');
+  }
+  appConfig.recovery = { ...nextRecovery, syncedCommitSequence: nextRecovery.commitSequence, lastSyncedAt: new Date().toISOString() };
+  await saveAppConfig(env, appConfig);
+  return { clusterId: nextRecovery.clusterId, commitSequence: nextRecovery.commitSequence, recordCount: snapshot.records.length };
 }
 
 function normalizeControllerUrl(value = '') {
@@ -4838,7 +4979,7 @@ async function createInitialAppConfig(body = {}) {
     instanceMode: 'standalone',
     managedNode: { controllerUrl: '', controllers: [] },
     storagePolicy: { ...defaultStoragePolicy(), updatedAt: new Date().toISOString() },
-    recovery: { publicKeyJwk: null, algorithm: '', fingerprint: '', updatedAt: '' }
+    recovery: normalizeRecoveryConfig(null)
   };
 }
 
@@ -6664,6 +6805,11 @@ async function createMirrorConversionJob(env, R2, forceRepair = false) {
   } while (cursor);
   const now = new Date().toISOString();
   const job = { id: crypto.randomUUID(), type: forceRepair ? 'mirror-repair' : 'convert-stripe-to-mirror', nodeId: policy.mirrorNodeId, forceRepair, status: items.length ? 'queued' : 'completed', items, totalBytes: items.reduce((sum, item) => sum + item.size, 0), completedBytes: 0, createdAt: now, updatedAt: now, error: '' };
+  if (!forceRepair && !items.length) {
+    const config = await getAppConfig(env);
+    config.storagePolicy = { ...normalizeStoragePolicy(config.storagePolicy), mode: 'mirror', targetMode: null, status: 'healthy', updatedAt: now };
+    await saveAppConfig(env, config);
+  }
   const jobs = await getStorageJobs(env); jobs.push(job); await saveStorageJobs(env, jobs); return job;
 }
 
@@ -7113,6 +7259,24 @@ async function handleStorageNodeApi(request, env, appConfig = null) {
     return new Response(JSON.stringify({ ok: true, name: env.SITE_TITLE || 'R2 Storage Node' }), {
       headers: nodeCorsHeaders({ 'Content-Type': 'application/json;charset=UTF-8' })
     });
+  }
+
+  if (url.pathname === '/api/node/recovery-package' && request.method === 'POST') {
+    if (principal.type !== 'controller' || !appConfig || appConfig.instanceMode !== 'managed_node') {
+      return new Response('Unsupported', { status: 409, headers: nodeCorsHeaders() });
+    }
+    try {
+      const recoveryPackage = await validateRecoveryPackage(await request.json());
+      await kvPutJson(env, RECOVERY_PACKAGE_PREFIX + recoveryPackage.clusterId, recoveryPackage);
+      return new Response(JSON.stringify({ ok: true, clusterId: recoveryPackage.clusterId, commitSequence: recoveryPackage.commitSequence }), {
+        headers: nodeCorsHeaders({ 'Content-Type': 'application/json;charset=UTF-8', 'Cache-Control': 'no-store' })
+      });
+    } catch (err) {
+      return new Response(JSON.stringify({ ok: false, error: err?.message || 'invalid recovery package' }), {
+        status: 400,
+        headers: nodeCorsHeaders({ 'Content-Type': 'application/json;charset=UTF-8' })
+      });
+    }
   }
 
   if (url.pathname === '/api/node/credential/rotate' && request.method === 'POST') {
@@ -7990,7 +8154,7 @@ export default {
         policy: publicStoragePolicy(appConfig.storagePolicy),
         capabilities: {
           stripe: { write: true, consolidation: false },
-          mirror: { write: false, recovery: false }
+          mirror: { write: true, recovery: false, recoverySnapshot: true }
         }
       });
     }
@@ -8007,10 +8171,26 @@ export default {
         const publicKeyJwk = body.publicKeyJwk;
         await crypto.subtle.importKey('jwk', publicKeyJwk, { name: 'ECDH', namedCurve: 'P-256' }, true, []);
         const fingerprint = await sha256Hex(JSON.stringify(publicKeyJwk));
-        appConfig.recovery = { publicKeyJwk, algorithm: 'ECDH-P256', fingerprint, updatedAt: new Date().toISOString() };
+        appConfig.recovery = {
+          ...normalizeRecoveryConfig(null),
+          publicKeyJwk,
+          algorithm: 'ECDH-P256',
+          fingerprint,
+          updatedAt: new Date().toISOString()
+        };
         await saveAppConfig(env, appConfig);
         return jsonResponse({ ok: true, recovery: publicRecoveryConfig(appConfig.recovery) });
       } catch { return jsonResponse({ ok: false, error: 'invalid P-256 recovery public JWK' }, 400); }
+    }
+
+    if (path === '/api/recovery/snapshot' && request.method === 'POST') {
+      if (!appConfig) return jsonResponse({ ok: false, error: 'legacy configuration migration required' }, 409);
+      try {
+        const snapshot = await synchronizeRecoverySnapshot(env, appConfig);
+        return jsonResponse({ ok: true, snapshot, recovery: publicRecoveryConfig(appConfig.recovery) }, 202);
+      } catch (err) {
+        return jsonResponse({ ok: false, error: err?.message || 'could not synchronize recovery snapshot', recovery: publicRecoveryConfig(appConfig.recovery) }, 409);
+      }
     }
 
     if (path === '/api/storage-policy/convert' && request.method === 'POST') {
