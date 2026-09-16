@@ -4604,7 +4604,8 @@ function publicAppSettings(config) {
       controllerUrl: String(config?.managedNode?.controllerUrl || ''),
       controllerCount: Array.isArray(config?.managedNode?.controllers) ? config.managedNode.controllers.length : 0
     },
-    storagePolicy: publicStoragePolicy(config?.storagePolicy)
+    storagePolicy: publicStoragePolicy(config?.storagePolicy),
+    recovery: publicRecoveryConfig(config?.recovery)
   };
 }
 
@@ -4620,6 +4621,10 @@ function defaultStoragePolicy() {
     mirrorFaultDomain: '',
     updatedAt: ''
   };
+}
+
+function publicRecoveryConfig(value) {
+  return { configured: !!value?.publicKeyJwk, algorithm: value?.algorithm || '', fingerprint: value?.fingerprint || '', updatedAt: value?.updatedAt || '' };
 }
 
 function normalizeStoragePolicy(value) {
@@ -4662,6 +4667,7 @@ async function getAppConfig(env) {
     changed = true;
   }
   if (!Array.isArray(next.managedNode.controllers)) { next.managedNode.controllers = []; changed = true; }
+  if (!next.recovery || typeof next.recovery !== 'object') { next.recovery = { publicKeyJwk: null, algorithm: '', fingerprint: '', updatedAt: '' }; changed = true; }
   const normalizedPolicy = normalizeStoragePolicy(next.storagePolicy);
   if (JSON.stringify(next.storagePolicy || {}) !== JSON.stringify(normalizedPolicy)) {
     next.storagePolicy = normalizedPolicy;
@@ -4831,7 +4837,8 @@ async function createInitialAppConfig(body = {}) {
     instanceId: crypto.randomUUID(),
     instanceMode: 'standalone',
     managedNode: { controllerUrl: '', controllers: [] },
-    storagePolicy: { ...defaultStoragePolicy(), updatedAt: new Date().toISOString() }
+    storagePolicy: { ...defaultStoragePolicy(), updatedAt: new Date().toISOString() },
+    recovery: { publicKeyJwk: null, algorithm: '', fingerprint: '', updatedAt: '' }
   };
 }
 
@@ -7986,6 +7993,24 @@ export default {
           mirror: { write: false, recovery: false }
         }
       });
+    }
+
+    if (path === '/api/recovery/status' && request.method === 'GET') {
+      return jsonResponse({ ok: true, recovery: publicRecoveryConfig(appConfig?.recovery), policy: publicStoragePolicy(appConfig?.storagePolicy) });
+    }
+
+    if (path === '/api/recovery/configure' && request.method === 'POST') {
+      if (!appConfig) return jsonResponse({ ok: false, error: 'legacy configuration migration required' }, 409);
+      const body = await request.json().catch(() => ({}));
+      if (body.confirm !== 'RECOVERY_PUBLIC_KEY') return jsonResponse({ ok: false, error: 'explicit RECOVERY_PUBLIC_KEY confirmation is required' }, 400);
+      try {
+        const publicKeyJwk = body.publicKeyJwk;
+        await crypto.subtle.importKey('jwk', publicKeyJwk, { name: 'ECDH', namedCurve: 'P-256' }, true, []);
+        const fingerprint = await sha256Hex(JSON.stringify(publicKeyJwk));
+        appConfig.recovery = { publicKeyJwk, algorithm: 'ECDH-P256', fingerprint, updatedAt: new Date().toISOString() };
+        await saveAppConfig(env, appConfig);
+        return jsonResponse({ ok: true, recovery: publicRecoveryConfig(appConfig.recovery) });
+      } catch { return jsonResponse({ ok: false, error: 'invalid P-256 recovery public JWK' }, 400); }
     }
 
     if (path === '/api/storage-policy/convert' && request.method === 'POST') {
