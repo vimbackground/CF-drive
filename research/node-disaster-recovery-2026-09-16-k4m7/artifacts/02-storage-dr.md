@@ -1,8 +1,8 @@
 # Storage DR facet — RAID/EC、归集迁移与主控晋升
 
-> Run: `k4m7`  
-> Facet: storage/data-plane disaster recovery and control-plane promotion  
-> Research dimensions: Chinese; technical architecture evaluation; standard depth; low hallucination tolerance; business-grade citation; no paid platform; **Adjudication** mode.  
+> Run: `k4m7`
+> Facet: storage/data-plane disaster recovery and control-plane promotion
+> Research dimensions: Chinese; technical architecture evaluation; standard depth; low hallucination tolerance; business-grade citation; no paid platform; **Adjudication** mode.
 > Scope boundary: primary/official documentation only. This artifact evaluates feasibility and tradeoffs; it does not prescribe project code changes.
 
 ## ClaimCard[]
@@ -297,4 +297,3 @@ EC 写入不能在“部分成功”后就发布 manifest。至少需要临时 u
 - 未找到 Cloudflare 官方提供“将 D1 read replica 晋升为另一个账号的可写 primary”的机制；现有官方资料反而明确所有写入仍转发到原 primary。
 - 未找到 Cloudflare 原生功能能理解并自动修复本项目自定义 shard manifest；R2 迁移工具只处理对象。
 - Ceph 文档用于验证纠删码原理与故障域约束，不意味着 Cloudflare Workers/R2 原生具备 Ceph 的 CRUSH、PG、scrub、recovery 或 backfill 控制面。
-

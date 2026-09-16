@@ -55,4 +55,3 @@
 - warrant: A single metadata writer matches the current one-instance D1 model, while limited B-side maintenance preserves revocation and recovery without introducing dual-primary conflicts.
 - qualifier: Preferred for the current project and its expected cross-account node topology.
 - key_defeater: If all entrypoints can be proven to use one shared control plane and unified identity, multiple UI entrypoints are acceptable, but they remain frontends rather than independent masters.
-

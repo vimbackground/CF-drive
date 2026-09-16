@@ -6,4 +6,3 @@
 - No external paid deep-research service was used.
 - Load-bearing conclusion passed the warrant gate: one canonical control plane plus limited node-local maintenance addresses both split-brain and recovery risks.
 - Known limitation: no live multi-account deployment was exercised; this is an architecture assessment, not an implementation verification.
-

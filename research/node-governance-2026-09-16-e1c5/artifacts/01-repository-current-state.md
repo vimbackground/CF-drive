@@ -15,4 +15,3 @@
 - Tokens are omitted from public management responses but are not encrypted in D1.
 - One token per instance prevents link-level revocation and auditing.
 - Permanent manifest format already avoids credential persistence and can remain compatible.
-

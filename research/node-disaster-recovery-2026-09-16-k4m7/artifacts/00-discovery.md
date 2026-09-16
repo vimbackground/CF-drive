@@ -79,4 +79,3 @@ Lead list only; each item must be grounded again before citation:
 ## Adjacent-category question
 
 The same need can be solved without calling it RAID: full-object/part replication, immutable backup plus restore, or active-passive control-plane promotion with a migration journal. These remain candidates for Round 1 assessment.
-

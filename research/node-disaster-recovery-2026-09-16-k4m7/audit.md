@@ -38,4 +38,3 @@
 - Evidence coverage: sufficient for architecture recommendation.
 - Remaining empirical gap: Worker-side erasure coding performance and migration throughput require prototypes before implementation commitment.
 - External paid Deep Research: not required.
-

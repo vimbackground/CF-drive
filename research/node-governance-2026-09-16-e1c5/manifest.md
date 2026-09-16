@@ -11,4 +11,3 @@
 - current_step: report delivered
 - todos: none
 - awaiting_user_confirmation: none
-

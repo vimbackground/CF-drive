@@ -14,4 +14,3 @@
 - A Worker Secret or Secrets Store binding is the appropriate location for a D1 credential-wrapping key.
 - Same-account deployments may use Service Bindings as a private fast path; cross-account nodes still need explicit HTTPS authentication.
 - Cloudflare's D1 replication is not a multi-primary synchronization mechanism for two independent application databases.
-

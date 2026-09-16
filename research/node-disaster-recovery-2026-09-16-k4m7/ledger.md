@@ -48,4 +48,3 @@
 
 - matrix_outcome: preferred
 - preferred_hypothesis_id: H2
-

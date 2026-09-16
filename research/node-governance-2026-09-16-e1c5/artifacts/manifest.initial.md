@@ -11,4 +11,3 @@
 - current_step: discovery and repository recon
 - todos: inspect current node credential path; compare dual-primary, primary-only, and delegated-node models; produce recommendation
 - awaiting_user_confirmation: none
-
