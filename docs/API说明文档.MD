@@ -120,6 +120,7 @@
 | `POST /api/storage-jobs/<id>/run` | 执行一个归集分片；复制、分段 SHA-256 校验、切换 manifest 并清理源分片。 |
 | `POST /api/storage-jobs/<id>/pause\|resume\|cancel` | 暂停、继续或取消尚未完成的归集作业；取消不会删除源分片。 |
 | `POST /api/mirror/scrub` | 创建 Mirror 副本校验作业；摘要或副本布局异常会将策略标记为 `degraded`。 |
+| `POST /api/mirror/repair` | 创建 Mirror repair 作业；用主副本重建镜像 placement，校验后以 CAS 替换。 |
 
 新建 Stripe manifest 使用 `sha256-tree-v1:<hex>`：对每个不超过 8 MiB 的数据段做 SHA-256，再对顺序叶子摘要做根哈希。它避免将完整大分片加载到 Worker 内存，并用于归集前后的数据一致性核验。
 

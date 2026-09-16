@@ -10,7 +10,8 @@
 - 已具备：Stripe→Mirror 的持久化副本迁移、树摘要校验、CAS manifest 双 placement 写入与备用读取；全量作业完成前策略保持 `converting_to_mirror`。
 - 已具备：Mirror 新写入双写；主控和镜像节点均落盘且树摘要一致后才提交 manifest，镜像不可用时拒绝受保护写入。
 - 已具备：Mirror scrub；逐副本摘要校验失败会标记 `degraded`。
-- 尚未具备：repair、Mirror→Stripe 转换、控制面恢复包和跨账号灾备接管。
+- 已具备：Mirror repair；从主副本重建镜像 placement 并校验后 CAS 替换。
+- 尚未具备：Mirror→Stripe 转换、控制面恢复包和跨账号灾备接管。
 - 因此产品当前仍只能称为 Stripe 容量模式的增量实现，不能宣称已实现 Mirror 容灾或账号级接管。
 
 ## 1. 决策摘要

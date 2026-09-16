@@ -6621,7 +6621,7 @@ async function runStorageJob(env, R2, jobId) {
   if (!job) throw new Error('storage job not found');
   if (job.type === 'consolidate-node') return runConsolidationJob(env, R2, jobId);
   if (job.type === 'upgrade-manifest-v1') return runManifestUpgradeJob(env, R2, jobId);
-  if (job.type === 'convert-stripe-to-mirror') return runMirrorConversionJob(env, R2, jobId);
+  if (['convert-stripe-to-mirror', 'mirror-repair'].includes(job.type)) return runMirrorConversionJob(env, R2, jobId);
   if (job.type === 'mirror-scrub') return runMirrorScrubJob(env, R2, jobId);
   throw new Error('unsupported storage job');
 }
@@ -6637,9 +6637,9 @@ async function openPartStream(R2, part) {
   return response.body;
 }
 
-async function createMirrorConversionJob(env, R2) {
+async function createMirrorConversionJob(env, R2, forceRepair = false) {
   const policy = normalizeStoragePolicy((await getAppConfig(env))?.storagePolicy);
-  if (policy.status !== 'converting_to_mirror' || !policy.mirrorNodeId) throw new Error('Mirror conversion has not been prepared');
+  if (!['converting_to_mirror', 'healthy', 'degraded'].includes(policy.status) || !policy.mirrorNodeId) throw new Error('Mirror conversion has not been prepared');
   const items = [];
   let cursor;
   do {
@@ -6649,20 +6649,20 @@ async function createMirrorConversionJob(env, R2) {
       const manifest = await readManifestObject(await R2.get(object.key));
       if (!isManifestFile(manifest) || Number(manifest.version) < 2) continue;
       for (const part of manifest.parts) {
-        if (manifestPartReplicas(part).some(replica => (replica.storageId || replica.nodeId) === policy.mirrorNodeId)) continue;
+        if (!forceRepair && manifestPartReplicas(part).some(replica => (replica.storageId || replica.nodeId) === policy.mirrorNodeId)) continue;
         items.push({ manifestKey: object.key, partId: part.partId, partNumber: part.partNumber, size: Number(part.size || 0), status: 'pending', error: '' });
       }
     }
     cursor = listed.cursor;
   } while (cursor);
   const now = new Date().toISOString();
-  const job = { id: crypto.randomUUID(), type: 'convert-stripe-to-mirror', nodeId: policy.mirrorNodeId, status: items.length ? 'queued' : 'completed', items, totalBytes: items.reduce((sum, item) => sum + item.size, 0), completedBytes: 0, createdAt: now, updatedAt: now, error: '' };
+  const job = { id: crypto.randomUUID(), type: forceRepair ? 'mirror-repair' : 'convert-stripe-to-mirror', nodeId: policy.mirrorNodeId, forceRepair, status: items.length ? 'queued' : 'completed', items, totalBytes: items.reduce((sum, item) => sum + item.size, 0), completedBytes: 0, createdAt: now, updatedAt: now, error: '' };
   const jobs = await getStorageJobs(env); jobs.push(job); await saveStorageJobs(env, jobs); return job;
 }
 
 async function runMirrorConversionJob(env, R2, jobId) {
   const jobs = await getStorageJobs(env);
-  const job = jobs.find(item => item.id === jobId && item.type === 'convert-stripe-to-mirror');
+  const job = jobs.find(item => item.id === jobId && ['convert-stripe-to-mirror', 'mirror-repair'].includes(item.type));
   if (!job) throw new Error('storage job not found');
   if (['completed', 'paused', 'cancelled'].includes(job.status)) return job;
   const mirrorNode = (await getStorageNodes(env, true)).find(node => node.id === job.nodeId && node.enabled !== false && node.lifecycle === 'active');
@@ -6682,7 +6682,7 @@ async function runMirrorConversionJob(env, R2, jobId) {
     const manifest = await readManifestObject(object);
     const sourcePart = manifest?.parts?.find(part => part.partId === item.partId || (!item.partId && part.partNumber === item.partNumber));
     if (!sourcePart) throw new Error('manifest part no longer exists');
-    if (manifestPartReplicas(sourcePart).some(replica => (replica.storageId || replica.nodeId) === mirrorNode.id)) {
+    if (!job.forceRepair && manifestPartReplicas(sourcePart).some(replica => (replica.storageId || replica.nodeId) === mirrorNode.id)) {
       item.status = 'completed';
     } else {
       const [resolvedSource] = await resolveManifestParts({ parts: [sourcePart] }, env);
@@ -6693,7 +6693,7 @@ async function runMirrorConversionJob(env, R2, jobId) {
       const targetHash = await manifestPartTreeHash(env, R2, { storageType: 'node', nodeId: mirrorNode.id, nodeUrl: mirrorNode.url, token: mirrorNode.token, key: targetKey, size: item.size });
       if (!constantTimeEqual(sourceHash, targetHash) || (sourcePart.hash && !constantTimeEqual(sourcePart.hash, sourceHash))) throw new Error('mirror checksum verification failed');
       sourcePart.hash = sourceHash;
-      sourcePart.replicas = [...manifestPartReplicas(sourcePart), { storageId: mirrorNode.id, nodeId: mirrorNode.id, storageType: 'node', key: targetKey, nodeName: mirrorNode.name, nodeUrl: mirrorNode.url, state: 'healthy' }];
+      sourcePart.replicas = [...manifestPartReplicas(sourcePart).filter(replica => (replica.storageId || replica.nodeId) !== mirrorNode.id), { storageId: mirrorNode.id, nodeId: mirrorNode.id, storageType: 'node', key: targetKey, nodeName: mirrorNode.name, nodeUrl: mirrorNode.url, state: 'healthy' }];
       manifest.generation = Math.max(1, Number(manifest.generation) || 1) + 1;
       manifest.mode = manifest.parts.every(part => manifestPartReplicas(part).length >= 2) ? 'mirror' : 'stripe';
       await putManifestCas(R2, item.manifestKey, object?.etag, manifest);
@@ -8054,6 +8054,11 @@ export default {
     if (path === '/api/mirror/scrub' && request.method === 'POST') {
       try { return jsonResponse({ ok: true, job: publicStorageJob(await createMirrorScrubJob(env, R2)) }, 202); }
       catch (err) { return jsonResponse({ ok: false, error: err?.message || 'could not create scrub job' }, 409); }
+    }
+
+    if (path === '/api/mirror/repair' && request.method === 'POST') {
+      try { return jsonResponse({ ok: true, job: publicStorageJob(await createMirrorConversionJob(env, R2, true)) }, 202); }
+      catch (err) { return jsonResponse({ ok: false, error: err?.message || 'could not create repair job' }, 409); }
     }
 
     const runJobMatch = /^\/api\/storage-jobs\/([^/]+)\/run$/.exec(path);
