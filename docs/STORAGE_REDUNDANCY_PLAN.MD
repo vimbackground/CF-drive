@@ -8,7 +8,8 @@
 
 - 已具备：受管节点接入与排空、manifest v2 的 Stripe 布局元数据与 `sha256-tree-v1` 内容摘要、持久化归集作业、主控 R2 复制、分段 SHA-256 校验、manifest 切换与源分片清理、暂停/继续/取消 API，以及需要管理员声明不同故障域的 Mirror 转换准备门禁。
 - 已具备：Stripe→Mirror 的持久化副本迁移、树摘要校验、CAS manifest 双 placement 写入与备用读取；全量作业完成前策略保持 `converting_to_mirror`。
-- 尚未具备：Mirror 新写入双写、scrub/repair、Mirror→Stripe 转换、控制面恢复包和跨账号灾备接管。
+- 已具备：Mirror 新写入双写；主控和镜像节点均落盘且树摘要一致后才提交 manifest，镜像不可用时拒绝受保护写入。
+- 尚未具备：scrub/repair、Mirror→Stripe 转换、控制面恢复包和跨账号灾备接管。
 - 因此产品当前仍只能称为 Stripe 容量模式的增量实现，不能宣称已实现 Mirror 容灾或账号级接管。
 
 ## 1. 决策摘要

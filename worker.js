@@ -6567,7 +6567,11 @@ async function runManifestUpgradeJob(env, R2, jobId) {
   if (!job) throw new Error('storage job not found');
   if (['completed', 'paused', 'cancelled'].includes(job.status)) return job;
   const item = (job.items || []).find(value => value.status === 'pending' || value.status === 'failed');
-  if (!item) { job.status = 'completed'; await saveStorageJobs(env, jobs); return job; }
+  if (!item) {
+    job.status = 'completed';
+    await saveStorageJobs(env, jobs);
+    return job;
+  }
   job.status = 'copying';
   item.status = 'copying';
   try {
@@ -6663,7 +6667,14 @@ async function runMirrorConversionJob(env, R2, jobId) {
   const mirrorNode = (await getStorageNodes(env, true)).find(node => node.id === job.nodeId && node.enabled !== false && node.lifecycle === 'active');
   if (!mirrorNode) throw new Error('mirror node is unavailable');
   const item = job.items.find(value => value.status === 'pending' || value.status === 'failed');
-  if (!item) { job.status = 'completed'; await saveStorageJobs(env, jobs); return job; }
+  if (!item) {
+    job.status = 'completed';
+    const config = await getAppConfig(env);
+    config.storagePolicy = { ...normalizeStoragePolicy(config.storagePolicy), mode: 'mirror', targetMode: null, status: 'healthy', updatedAt: new Date().toISOString() };
+    await saveAppConfig(env, config);
+    await saveStorageJobs(env, jobs);
+    return job;
+  }
   job.status = 'copying'; item.status = 'copying';
   try {
     const object = await R2.get(item.manifestKey);
@@ -8418,7 +8429,18 @@ export default {
       if (expectedSize > 0 && contentLength > 0 && contentLength !== expectedSize) {
         return jsonResponse({ ok: false, error: 'part size mismatch' }, 400);
       }
-      await R2.put(part.key, request.body, { httpMetadata: { contentType: 'application/octet-stream' } });
+      if (part.mirror) {
+        if (!request.body) return jsonResponse({ ok: false, error: 'missing part body' }, 400);
+        const [mainBody, mirrorBody] = request.body.tee();
+        const mirrorUrl = part.mirror.nodeUrl.replace(/\/+$/, '') + '/api/node/part?key=' + encodeURIComponent(part.mirror.key) + '&size=' + expectedSize;
+        const [mainResult, mirrorResult] = await Promise.all([
+          R2.put(part.key, mainBody, { httpMetadata: { contentType: 'application/octet-stream' } }),
+          fetch(mirrorUrl, { method: 'PUT', headers: getNodeAuthHeaders({ token: part.mirror.token }), body: mirrorBody })
+        ]);
+        if (!mainResult || !mirrorResult.ok) return jsonResponse({ ok: false, error: 'Mirror part write failed' }, 502);
+      } else {
+        await R2.put(part.key, request.body, { httpMetadata: { contentType: 'application/octet-stream' } });
+      }
       if (expectedSize > 0) {
         const meta = await R2.head(part.key);
         if (!meta || meta.size !== expectedSize) {
@@ -8487,7 +8509,11 @@ export default {
         return jsonResponse({ ok: false, error: 'file below distributed threshold' }, 409);
       }
       const cleanPath = assertVirtualPath(filePath);
-      const nodes = [mainStorageNode(), ...await getStorageNodes(env)];
+      const policy = publicStoragePolicy(appConfig?.storagePolicy);
+      const configuredNodes = await getStorageNodes(env);
+      const mirrorNode = policy.mode === 'mirror' ? configuredNodes.find(node => node.id === policy.mirrorNodeId && node.enabled !== false && node.lifecycle === 'active') : null;
+      if (policy.mode === 'mirror' && !mirrorNode) return jsonResponse({ ok: false, error: 'Mirror node is unavailable; protected writes are stopped' }, 503);
+      const nodes = policy.mode === 'mirror' ? [mainStorageNode()] : [mainStorageNode(), ...configuredNodes];
 
       const sessionId = crypto.randomUUID();
       const now = new Date().toISOString();
@@ -8515,6 +8541,13 @@ export default {
           nodeName: isMain ? '主控账号' : node.name,
           nodeUrl: isMain ? '' : node.url,
           token: isMain ? '' : node.token,
+          mirror: mirrorNode ? {
+            nodeId: mirrorNode.id,
+            nodeName: mirrorNode.name,
+            nodeUrl: mirrorNode.url,
+            token: mirrorNode.token,
+            key: controllerPartPrefix + 'mirrorwrite_' + sessionId + '_' + String(partNumber).padStart(6, '0')
+          } : null,
           uploadToken,
           uploadUrl: isMain
             ? '/api/distributed/main-part?sessionId=' + encodeURIComponent(sessionId) + '&partNumber=' + partNumber + '&token=' + encodeURIComponent(uploadToken)
@@ -8572,6 +8605,21 @@ export default {
       const manifestParts = [];
       for (const part of session.parts) {
         const hash = await manifestPartTreeHash(env, R2, part);
+        const replicas = [{
+          storageId: part.nodeId,
+          key: part.key,
+          storageType: part.storageType || 'node',
+          nodeId: part.nodeId,
+          nodeName: part.nodeName,
+          nodeUrl: part.nodeUrl,
+          state: 'healthy'
+        }];
+        if (part.mirror) {
+          const mirrorPart = { storageType: 'node', nodeId: part.mirror.nodeId, nodeUrl: part.mirror.nodeUrl, token: part.mirror.token, key: part.mirror.key, size: part.size };
+          const mirrorHash = await manifestPartTreeHash(env, R2, mirrorPart);
+          if (!constantTimeEqual(hash, mirrorHash)) throw new Error('Mirror part checksum mismatch');
+          replicas.push({ storageId: part.mirror.nodeId, key: part.mirror.key, storageType: 'node', nodeId: part.mirror.nodeId, nodeName: part.mirror.nodeName, nodeUrl: part.mirror.nodeUrl, state: 'healthy' });
+        }
         manifestParts.push({
           partNumber: part.partNumber,
           partId: crypto.randomUUID(),
@@ -8583,15 +8631,7 @@ export default {
           nodeId: part.nodeId,
           nodeName: part.nodeName,
           nodeUrl: part.nodeUrl,
-          replicas: [{
-            storageId: part.nodeId,
-            key: part.key,
-            storageType: part.storageType || 'node',
-            nodeId: part.nodeId,
-            nodeName: part.nodeName,
-            nodeUrl: part.nodeUrl,
-            state: 'healthy'
-          }]
+          replicas
         });
         offset += Number(part.size || 0);
       }
@@ -8599,7 +8639,7 @@ export default {
         type: 'distributed-file',
         version: MANIFEST_VERSION,
         layoutVersion: policy.layoutVersion,
-        mode: 'stripe',
+        mode: policy.mode === 'mirror' ? 'mirror' : 'stripe',
         generation: 1,
         contentHash: await treeHashFromLeaves(manifestParts.map(part => hexToBytes(part.hash.slice('sha256-tree-v1:'.length)))),
         path: session.path,
