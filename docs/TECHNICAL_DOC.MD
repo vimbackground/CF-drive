@@ -23,7 +23,7 @@
 | D1 绑定 | `DB` | 是 | 虚拟文件系统及全部状态数据。 |
 | Wrangler 文本变量 | `BOOTSTRAP_OWNER_PUBLIC_KEY` | 是 | 首次 `/setup` 认领签名验证的 P-256 公钥；不含私钥。 |
 | D1 配置 | 管理员密码校验记录、会话/分享签名密钥 | 认领时生成 | 认证和分享；密码不保存原文。 |
-| D1 配置 | WebDAV、站点外观、上传上限、节点 Token | 否 | 在实例 `/settings` 管理。 |
+| D1 配置 | WebDAV、站点外观、上传上限、受管节点控制端凭据摘要 | 否 | 在实例设置与节点维护页管理。 |
 
 私钥只保留在本地忽略的 `.cf-drive/`；`wrangler.toml` 可以提交，因为仅包含资源绑定和所有者公钥。首次部署由 Cloudflare 自动创建并绑定新的 R2 与 D1，生成的资源 ID 不会写回 GitHub 仓库。
 
@@ -62,7 +62,7 @@
 - 所有已登录的危险 HTTP API 请求要求同源：`X-R2Drive-CSRF: same-origin`，或匹配的 `Origin` / `Referer`。
 - 登录、分享密码和 WebDAV Basic Auth 在同一来源连续失败 5 次后锁定 15 分钟；D1 仅保存来源地址的 SHA-256 摘要和状态。
 - HTML 响应统一设置 `Cache-Control: no-store`、`X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY`、`Referrer-Policy: same-origin` 与受限 `Permissions-Policy`。
-- 分享密码、管理密码和存储节点 Token 是三类独立凭据，不可相互复用；管理员与 WebDAV 密码使用 PBKDF2-HMAC-SHA-256、100,000 次迭代的校验记录，并保存迭代参数以支持未来迁移。
+- 分享密码、管理密码、WebDAV 密码与每条存储节点连接凭据相互独立、不可复用；管理员与 WebDAV 密码使用 PBKDF2-HMAC-SHA-256、100,000 次迭代的校验记录，并保存迭代参数以支持未来迁移。节点 B 仅保存随机连接凭据的 SHA-256 摘要；控制端 A 保存由外部 `NODE_CREDENTIAL_KEK` 加密的密文。
 
 生产环境仍应在 Cloudflare WAF/Rate Limiting 对 `/api/login`、`/api/share-access` 与 `/dav/*` 加边缘限速。
 
@@ -102,7 +102,11 @@ WebDAV 仅在实例 `/settings` 启用且专用用户名、密码都存在时提
 
 ## 外部存储节点
 
-同一份 Worker 可部署为外部节点，但节点仍需要独立 R2 绑定和 `STORAGE_NODE_TOKEN`。节点 API 在主站认证之前处理，因此节点可只配置 R2 与节点 Token；它不应承担主站、分享或 WebDAV 流量。主控保存节点 URL 与 Token，并以 Bearer Token 调用 `/api/node/*`。
+同一份 Worker 可部署为外部节点。控制端 A 与节点 B 通过一次性配对码建立关系：B 生成每关系独立的随机连接凭据并只保存其 SHA-256 校验摘要；A 使用 Cloudflare Worker Secret `NODE_CREDENTIAL_KEK` 以 AES-256-GCM 加密凭据后写入 D1。密文包含节点 ID 绑定的附加认证数据，管理 API 不会返回旧凭据。
+
+B 接入后进入 `managed_node` 模式，仅提供作用域化 `/api/node/*` 分片 API、容量/健康检查和本地 `/node-settings` 应急维护；普通网盘、分享、WebDAV 与孤儿清理不再可用。A 是文件树、分享、manifest 与节点生命周期的唯一控制面。节点分片 key 带控制端实例 ID 前缀，避免多个控制端混用同一 R2 桶。
+
+节点生命周期为 `active → draining → retired`。`draining` 节点不再接收新分片；现有 manifest 仍可读取。删除节点配置前必须确认不存在 manifest 引用，避免旧文件因凭据记录被删除而失联。`STORAGE_NODE_TOKEN` 仅为旧实例兼容保留。
 
 ## 测试与维护
 

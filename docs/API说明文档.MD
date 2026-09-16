@@ -12,7 +12,7 @@
 - 所有有副作用的管理 API 还需要同源校验；程序化调用请带 `X-R2Drive-CSRF: same-origin`。
 - 虚拟路径不以 `/` 开头或结尾，不能包含 `.`、`..`、控制字符或空段。
 - 主站未配置 R2、D1 或所有者公钥时拒绝服务；未认领实例只开放 `/setup` 与初始化 API。
-- `/api/node/*` 不使用管理 Cookie，使用实例设置生成或轮换的独立 `STORAGE_NODE_TOKEN`。
+- `/api/node/*` 不使用管理 Cookie；受管节点使用每条 A↔B 连接独立的 Bearer 凭据，旧 `STORAGE_NODE_TOKEN` 仅兼容既有实例。
 
 ## 首次认领与实例设置
 
@@ -104,14 +104,17 @@
 | 方法与路径 | 请求 / 结果 |
 | --- | --- |
 | `GET /api/storage-nodes` | 列出节点；响应不返回 token。 |
-| `POST /api/storage-nodes` | `{id?,name,url,token,enabled?,weight?}` 新增或更新节点。 |
-| `DELETE /api/storage-nodes?id=<id>` | 删除节点配置。 |
+| `POST /api/storage-nodes/enroll` | `{name,url,enrollmentCode,weight?}`；用 B 生成的一次性配对码接入节点。A 加密保存连接凭据。 |
+| `POST /api/storage-nodes` | 兼容旧接口；`{id?,name,url,token,enabled?,weight?}`。仅在已配置 `NODE_CREDENTIAL_KEK` 时可用。 |
+| `POST /api/storage-nodes/rotate?id=<id>` | 轮换 A↔B 的独立连接凭据；不返回或查询旧凭据。旧凭据仅保留 10 分钟，以防控制端落库失败造成断连。 |
+| `POST /api/storage-nodes/drain?id=<id>` | 停止向节点分配新分片，标记为 `draining`。 |
+| `DELETE /api/storage-nodes?id=<id>` | 仅在没有 manifest 分片引用时删除节点配置。 |
 | `POST /api/storage-nodes/test?id=<id>` | 检查 ping 与容量接口。 |
 | `GET /api/storage-nodes/r2-files?id=main&cursor=&limit=100` | 查看主控或指定节点对象；`limit` 范围 1–200。 |
 
 ### 节点 Worker 接口
 
-所有接口带 `Authorization: Bearer <STORAGE_NODE_TOKEN>`：
+受管节点仅接受每条 A↔B 连接独立的 Bearer 凭据，并限制分片 key 至该控制端命名空间。`STORAGE_NODE_TOKEN` 仅保留为旧实例兼容路径：
 
 | 方法与路径 | 用途 |
 | --- | --- |
@@ -121,6 +124,15 @@
 | `PUT /api/node/part?key=&size=` | 写入一个节点分片。 |
 | `GET` / `HEAD /api/node/part?key=` | 读取节点分片，支持 Range。 |
 | `DELETE /api/node/part?key=` | 删除节点分片。 |
+| `POST /api/node/credential/rotate` | 控制端用现有连接凭据轮换其自身凭据。 |
+
+### 节点本地维护接口
+
+| 方法与路径 | 用途 |
+| --- | --- |
+| `POST /api/node-admin/enrollment` | 已登录的独立实例创建 10 分钟一次性配对码。 |
+| `POST /api/node/enroll` | 控制端使用配对码完成接入；不使用管理 Cookie。 |
+| `POST /api/node-admin/detach` | 已登录本地管理员以 `{confirm:"DETACH"}` 撤销控制端凭据并恢复独立模式。 |
 
 ## 客户端备份目录设置
 

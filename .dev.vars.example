@@ -1,3 +1,5 @@
 # CF-drive stores application configuration in D1 after owner-signed setup.
 # Do not put application passwords or signing keys in this file.
 # The local owner private key is generated under .cf-drive/ and is ignored by Git.
+# For local testing of controller-to-node enrollment, add a unique value locally:
+# NODE_CREDENTIAL_KEK="replace-with-a-random-32-byte-or-longer-secret"

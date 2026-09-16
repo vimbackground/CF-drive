@@ -29,6 +29,14 @@ npm.cmd run verify
 
 认领成功后，访问 `/settings` 管理站点标题、WebDAV、管理员密码和密钥轮换。管理员与 WebDAV 密码只存 PBKDF2 校验记录；分享、会话和存储节点的随机密钥由 Worker 生成并保存在 D1，不会回显。
 
+### 存储节点主密钥
+
+启用“控制端 A 接入存储节点 B”前，必须在 A 的 Cloudflare Worker **Settings → Variables and Secrets → Add → Secret** 新增 `NODE_CREDENTIAL_KEK`，填入独立的高强度随机值；不得写入 `wrangler.toml`、Git 或 D1。A 用它 AES-GCM 加密保存在 D1 的节点连接凭据；B 只保存凭据摘要。Cloudflare 的 D1 静态加密不能替代这把应用层主密钥。
+
+在 B 登录后访问 `/node-settings` 创建一次性配对码；随后在 A 的“存储节点”界面填写 B 地址和配对码。B 成为受管节点后，普通网盘、分享、WebDAV 和孤儿清理会停用，B 域名访问根路径会跳转至 A；B 仍保留 `/node-settings` 用于查看控制端和应急解除绑定。
+
+旧版本已手工录入的节点：先配置 `NODE_CREDENTIAL_KEK`，然后登录 A 打开“存储节点”列表。系统会在首次读取时将旧明文连接凭据迁移为密文；未配置该主密钥时，旧节点不会继续被使用。
+
 ## 5. 连接 GitHub 并自动发布
 
 按 [Cloudflare + GitHub 自动部署教程](./GITHUB_CLOUDFLARE_DEPLOYMENT.md) 设置 Cloudflare Workers Builds。首次发布前须确认：

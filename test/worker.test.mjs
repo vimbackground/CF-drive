@@ -142,6 +142,77 @@ test('storage-node API requires its own token and never reuses the admin passwor
   assert.equal(authorized.status, 200);
 });
 
+test('controller stores node credentials encrypted in D1 and never returns them', async () => {
+  const env = webDavEnvironment();
+  env.NODE_CREDENTIAL_KEK = 'test-node-credential-kek';
+  const ctx = { waitUntil() {} };
+  const cookie = await adminCookie(env, ctx);
+  const token = 'node-token-that-must-not-reach-d1-plaintext';
+  const saved = await worker.fetch(apiRequest('POST', '/api/storage-nodes', {
+    id: 'node-credential-test', name: 'Test node', url: 'https://node.example', token
+  }, cookie), env, ctx);
+  assert.equal(saved.status, 200);
+  const raw = env.DB._rows.get('storage_nodes').value;
+  assert.doesNotMatch(raw, new RegExp(token));
+  assert.match(raw, /ciphertext/);
+  const listed = await worker.fetch(apiRequest('GET', '/api/storage-nodes', undefined, cookie), env, ctx);
+  assert.equal(listed.status, 200);
+  const body = await listed.json();
+  assert.equal(body.nodes.length, 1);
+  assert.equal(body.nodes[0].credentialConfigured, true);
+  assert.equal(Object.hasOwn(body.nodes[0], 'token'), false);
+});
+
+test('one-time enrollment makes B a scoped managed node controlled by A', async () => {
+  const ctx = { waitUntil() {} };
+  const controller = await initializedInstance('https://controller.example', 'controller-password', { NODE_CREDENTIAL_KEK: 'controller-test-kek' }, ctx);
+  const node = await initializedInstance('https://node.example', 'node-password', {}, ctx);
+
+  const codeResponse = await worker.fetch(apiRequest('POST', '/api/node-admin/enrollment', undefined, node.cookie), node.env, ctx);
+  assert.equal(codeResponse.status, 200);
+  const { code } = await codeResponse.json();
+  assert.match(code, /^node_enroll_/);
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    if (new URL(request.url).origin === 'https://node.example') return worker.fetch(request, node.env, ctx);
+    return originalFetch(input, init);
+  };
+  try {
+    const enrolled = await worker.fetch(apiRequest('POST', '/api/storage-nodes/enroll', {
+      name: 'B node', url: 'https://node.example', enrollmentCode: code
+    }, controller.cookie), controller.env, ctx);
+    assert.equal(enrolled.status, 200);
+    assert.equal((await enrolled.json()).node.credentialConfigured, true);
+
+    const nodeList = await worker.fetch(apiRequest('GET', '/api/storage-nodes', undefined, controller.cookie), controller.env, ctx);
+    const nodeId = (await nodeList.json()).nodes[0].id;
+    const tested = await worker.fetch(apiRequest('POST', '/api/storage-nodes/test?id=' + encodeURIComponent(nodeId), undefined, controller.cookie), controller.env, ctx);
+    assert.equal(tested.status, 200, await tested.text());
+
+    const rotated = await worker.fetch(apiRequest('POST', '/api/storage-nodes/rotate?id=' + encodeURIComponent(nodeId), undefined, controller.cookie), controller.env, ctx);
+    assert.equal(rotated.status, 200, await rotated.text());
+    const retested = await worker.fetch(apiRequest('POST', '/api/storage-nodes/test?id=' + encodeURIComponent(nodeId), undefined, controller.cookie), controller.env, ctx);
+    assert.equal(retested.status, 200, await retested.text());
+
+    const draining = await worker.fetch(apiRequest('POST', '/api/storage-nodes/drain?id=' + encodeURIComponent(nodeId), undefined, controller.cookie), controller.env, ctx);
+    assert.equal(draining.status, 200);
+    const drainedList = await worker.fetch(apiRequest('GET', '/api/storage-nodes', undefined, controller.cookie), controller.env, ctx);
+    assert.equal((await drainedList.json()).nodes[0].lifecycle, 'draining');
+
+    const ordinaryApi = await worker.fetch(new Request('https://node.example/api/list', { headers: { Cookie: node.cookie } }), node.env, ctx);
+    assert.equal(ordinaryApi.status, 403);
+    const wrongToken = await worker.fetch(new Request('https://node.example/api/node/ping', { headers: { Authorization: 'Bearer wrong' } }), node.env, ctx);
+    assert.equal(wrongToken.status, 401);
+    const redirected = await worker.fetch(new Request('https://node.example/'), node.env, ctx);
+    assert.equal(redirected.status, 302);
+    assert.equal(redirected.headers.get('Location'), 'https://drive.example/');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('legacy public shared-folder routes do not bypass managed shares', async () => {
   const env = webDavEnvironment();
   const ctx = { waitUntil() {} };
@@ -278,6 +349,7 @@ function memoryD1() {
 
   return {
     prepare,
+    _rows: rows,
     async batch(statements) { return Promise.all(statements.map(statement => statement.runForBatch())); }
   };
 }
@@ -321,6 +393,11 @@ function memoryR2() {
         async arrayBuffer() { return bytes.slice().buffer; }
       };
     },
+    async list(options = {}) {
+      const prefix = String(options.prefix || '');
+      const keys = [...objects.keys()].filter(key => key.startsWith(prefix)).sort();
+      return { objects: keys.map(key => ({ key, ...cloneMeta(objects.get(key)) })), truncated: false, cursor: undefined };
+    },
     async delete(key) { objects.delete(key); }
   };
 }
@@ -359,6 +436,29 @@ async function adminCookie(env, ctx) {
   assert.equal(response.status, 200);
   assert.equal((await response.clone().json()).ok, true);
   return response.headers.get('Set-Cookie').split(';', 1)[0];
+}
+
+async function initializedInstance(origin, password, extraEnv, ctx) {
+  const env = { ...webDavEnvironment(), ...extraEnv };
+  delete env.ACCESS_PASSWORD;
+  delete env.SHARE_SECRET;
+  const owner = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
+  const publicJwk = await crypto.subtle.exportKey('jwk', owner.publicKey);
+  env.BOOTSTRAP_OWNER_PUBLIC_KEY = Buffer.from(JSON.stringify(publicJwk)).toString('base64url');
+  const challengeResponse = await worker.fetch(new Request(origin + '/api/setup/challenge'), env, ctx);
+  assert.equal(challengeResponse.status, 200);
+  const challenge = await challengeResponse.json();
+  const signature = await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, owner.privateKey, new TextEncoder().encode(challenge.message));
+  const claim = await worker.fetch(new Request(origin + '/api/setup/claim', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nonce: challenge.nonce, signature: Buffer.from(signature).toString('base64url'), password, siteTitle: origin })
+  }), env, ctx);
+  assert.equal(claim.status, 200);
+  const login = await worker.fetch(new Request(origin + '/api/login', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-R2Drive-CSRF': 'same-origin' }, body: JSON.stringify({ password })
+  }), env, ctx);
+  assert.equal(login.status, 200);
+  return { env, cookie: login.headers.get('Set-Cookie').split(';', 1)[0] };
 }
 
 test('WebDAV request flow authenticates and manages a simple file lifecycle', async () => {

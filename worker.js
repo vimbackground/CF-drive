@@ -2771,7 +2771,7 @@ function renderStorageNodes(nodes) {
     title.textContent = node.name || node.id || '';
     const sub = document.createElement('div');
     sub.className = 'node-row-sub';
-    sub.textContent = isMain ? '本地 R2 存储桶' : ((node.url || '') + ' \u00B7 ' + (node.enabled !== false ? '启用' : '停用'));
+    sub.textContent = isMain ? '本地 R2 存储桶' : ((node.url || '') + ' \u00B7 ' + (node.lifecycle === 'draining' ? '排空中' : (node.enabled !== false ? '启用' : '停用')));
     main.append(title, sub);
 
     const viewBtn = document.createElement('button');
@@ -2794,6 +2794,19 @@ function renderStorageNodes(nodes) {
         testStorageNode(node.id);
       });
 
+      const rotateBtn = document.createElement('button');
+      rotateBtn.className = 'icon-btn';
+      rotateBtn.title = '轮换节点凭据';
+      rotateBtn.innerHTML = '<span class="material-icons-round">key</span>';
+      rotateBtn.addEventListener('click', function() { rotateStorageNode(node.id); });
+
+      const drainBtn = document.createElement('button');
+      drainBtn.className = 'icon-btn';
+      drainBtn.title = '停止新分片并排空';
+      drainBtn.innerHTML = '<span class="material-icons-round">hourglass_top</span>';
+      drainBtn.disabled = node.lifecycle === 'draining';
+      drainBtn.addEventListener('click', function() { drainStorageNode(node.id); });
+
       const delBtn = document.createElement('button');
       delBtn.className = 'icon-btn';
       delBtn.title = '删除';
@@ -2802,7 +2815,7 @@ function renderStorageNodes(nodes) {
         deleteStorageNode(node.id);
       });
 
-      row.append(testBtn, delBtn);
+      row.append(testBtn, rotateBtn, drainBtn, delBtn);
     }
 
     list.appendChild(row);
@@ -2814,24 +2827,40 @@ function escapeHtml(value = '') {
 async function saveStorageNode() {
   const name = document.getElementById('nodeNameInput')?.value?.trim();
   const url = document.getElementById('nodeUrlInput')?.value?.trim();
-  const token = document.getElementById('nodeTokenInput')?.value?.trim();
-  if (!name || !url || !token) { showSnackbar('请填写节点名称、地址和密钥'); return; }
-  const res = await fetch('/api/storage-nodes', {
+  const enrollmentCode = document.getElementById('nodeTokenInput')?.value?.trim();
+  if (!name || !url || !enrollmentCode) { showSnackbar('请填写节点名称、地址和一次性配对码'); return; }
+  const res = await fetch('/api/storage-nodes/enroll', {
     method: 'POST',
     headers: jsonHeaders(),
-    body: JSON.stringify({ name, url, token })
+    body: JSON.stringify({ name, url, enrollmentCode })
   });
-  if (!res.ok) { showSnackbar('保存节点失败'); return; }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) { showSnackbar('接入节点失败：' + (data.error || res.status)); return; }
   document.getElementById('nodeNameInput').value = '';
   document.getElementById('nodeUrlInput').value = '';
   document.getElementById('nodeTokenInput').value = '';
-  showSnackbar('节点已保存');
+  showSnackbar('节点已安全接入');
   loadStorageNodes();
 }
 async function deleteStorageNode(id) {
   if (!confirm('确定删除这个存储节点？')) return;
   const res = await fetch('/api/storage-nodes?id=' + encodeURIComponent(id), { method: 'DELETE', headers: CSRF_HEADER });
-  showSnackbar(res.ok ? '节点已删除' : '删除节点失败');
+  const data = await res.json().catch(() => ({}));
+  showSnackbar(res.ok ? '节点已删除' : ('删除节点失败：' + (data.error || res.status)));
+  loadStorageNodes();
+}
+async function rotateStorageNode(id) {
+  if (!confirm('轮换后旧凭据会立即失效，继续吗？')) return;
+  const res = await fetch('/api/storage-nodes/rotate?id=' + encodeURIComponent(id), { method: 'POST', headers: CSRF_HEADER });
+  const data = await res.json().catch(() => ({}));
+  showSnackbar(res.ok ? '节点凭据已轮换' : ('轮换失败：' + (data.error || res.status)));
+  loadStorageNodes();
+}
+async function drainStorageNode(id) {
+  if (!confirm('此节点将停止接收新分片；现有分片需迁移后才能删除，继续吗？')) return;
+  const res = await fetch('/api/storage-nodes/drain?id=' + encodeURIComponent(id), { method: 'POST', headers: CSRF_HEADER });
+  const data = await res.json().catch(() => ({}));
+  showSnackbar(res.ok ? '节点已进入排空状态' : ('操作失败：' + (data.error || res.status)));
   loadStorageNodes();
 }
 async function testStorageNode(id) {
@@ -3008,6 +3037,11 @@ function renderSetupPage(siteTitle = 'CF-drive') {
 function renderSettingsPage(settings, siteTitle = 'CF-drive') {
   const safe = JSON.stringify(settings).replace(/</g, '\\u003c');
   return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>网盘设置 - ${escapeHtml(siteTitle)}</title><style>:root{color-scheme:light}*{box-sizing:border-box}body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;max-width:760px;margin:5vh auto;padding:24px;background:#f6f8fa;color:#1f2328}.utility-panel{background:#fff;padding:28px;border-radius:12px;box-shadow:0 2px 12px #0001;min-height:560px}.utility-nav{display:flex;gap:8px;flex-wrap:wrap;padding-bottom:20px;margin-bottom:24px;border-bottom:1px solid #d0d7de}.utility-nav a{padding:8px 12px;border-radius:8px;color:#1557b0;text-decoration:none;font-size:14px}.utility-nav a:hover,.utility-nav a.active{background:#e8f0fe;color:#0b57d0;font-weight:600}h1{margin:0 0 12px}label{display:block;margin:14px 0 6px}input{box-sizing:border-box;width:100%;padding:10px;border:1px solid #8c959f;border-radius:8px;font:inherit}button{margin:18px 8px 0 0;padding:10px 16px;border:0;border-radius:999px;background:#0b57d0;color:#fff;font:inherit;cursor:pointer}small{color:#57606a}#status{white-space:pre-wrap}.utility-footer{margin-top:28px;padding-top:18px;border-top:1px solid #d0d7de;color:#57606a;font-size:13px}.utility-footer a{color:#1557b0;text-decoration:none}@media(max-width:600px){body{margin:0;padding:12px}.utility-panel{padding:20px;min-height:calc(100vh - 24px)}}</style></head><body><main class="utility-panel"><nav class="utility-nav"><a href="/">返回文件管理</a><a class="active" href="/settings">网盘设置</a><a href="/guide">使用指南</a></nav><h1>网盘设置</h1><label>站点标题<input id="siteTitle" maxlength="100"></label><label>WebDAV 用户名<input id="webdavUsername" autocomplete="username"></label><label>WebDAV 新密码 <small>留空保持不变；至少 8 位</small><input id="webdavPassword" type="password" minlength="8" autocomplete="new-password"></label><label><input id="webdavEnabled" type="checkbox" style="width:auto"> 启用 WebDAV</label><label>WebDAV 最大上传字节数<input id="maxUploadBytes" type="number" min="1"></label><label>新的管理员密码 <small>留空保持不变；至少 8 位</small><input id="adminPassword" type="password" minlength="8" autocomplete="new-password"></label><label><input id="rotateShareSecret" type="checkbox" style="width:auto"> 轮换分享签名密钥（会使现有分享授权 Cookie 失效）</label><button id="save">保存设置</button><p id="status" role="alert"></p><div class="utility-footer"><a href="https://github.com/vimbackground/CF-drive" target="_blank" rel="noopener noreferrer">项目 GitHub</a></div></main><script>const initial=${safe};for(const [id,value] of Object.entries({siteTitle:initial.siteTitle,webdavUsername:initial.webdav.username,maxUploadBytes:initial.webdav.maxUploadBytes}))document.getElementById(id).value=value;document.getElementById('webdavEnabled').checked=initial.webdav.enabled;document.getElementById('save').onclick=async()=>{const status=document.getElementById('status');const body={siteTitle:document.getElementById('siteTitle').value,webdav:{enabled:document.getElementById('webdavEnabled').checked,username:document.getElementById('webdavUsername').value,maxUploadBytes:Number(document.getElementById('maxUploadBytes').value),password:document.getElementById('webdavPassword').value},adminPassword:document.getElementById('adminPassword').value,rotateShareSecret:document.getElementById('rotateShareSecret').checked};const r=await fetch('/api/settings',{method:'PUT',headers:{'Content-Type':'application/json','X-R2Drive-CSRF':'same-origin'},body:JSON.stringify(body)});const data=await r.json();status.textContent=data.ok?'设置已保存。':'保存失败：'+(data.error||r.status)};</script></body></html>`;
+}
+
+function renderNodeMaintenancePage(settings, siteTitle = 'CF-drive') {
+  const safe = JSON.stringify(settings).replace(/</g, '\\u003c');
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>存储节点 - ${escapeHtml(siteTitle)}</title><style>body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;max-width:720px;margin:5vh auto;padding:24px;background:#f6f8fa;color:#1f2328}.panel{background:#fff;padding:28px;border-radius:12px;box-shadow:0 2px 12px #0001}button{margin:12px 8px 0 0;padding:10px 16px;border:0;border-radius:999px;background:#0b57d0;color:#fff;font:inherit;cursor:pointer}.danger{background:#b3261e}code{display:block;overflow-wrap:anywhere;padding:12px;background:#f1f3f5;border-radius:8px;margin-top:10px}small{color:#57606a}#status{white-space:pre-wrap}</style></head><body><main class="panel"><h1>存储节点维护</h1><p id="mode"></p><p id="controller"></p><section id="enroll"><h2>接入控制端</h2><p><small>创建一次性配对码后，在控制端 A 的“存储节点”中填写节点地址和此配对码。配对码仅显示一次，10 分钟后失效。</small></p><button id="create">创建配对码</button><code id="code" hidden></code></section><section id="managed" hidden><h2>受管节点</h2><p><small>此实例已停用普通网盘管理、分享、WebDAV 和孤儿清理。文件管理请前往控制端。仅在控制端已经排空此节点或无法恢复时解除绑定。</small></p><button id="open">打开控制端</button><button id="detach" class="danger">解除绑定并撤销控制端凭据</button></section><p id="status" role="alert"></p></main><script>const initial=${safe};const status=document.getElementById('status'),mode=document.getElementById('mode'),controller=document.getElementById('controller');mode.textContent=initial.instanceMode==='managed_node'?'状态：受管存储节点':'状态：独立实例';controller.textContent=initial.managedNode.controllerUrl?'控制端：'+initial.managedNode.controllerUrl:'';document.getElementById('enroll').hidden=initial.instanceMode==='managed_node';document.getElementById('managed').hidden=initial.instanceMode!=='managed_node';document.getElementById('open').onclick=()=>location.href=initial.managedNode.controllerUrl;document.getElementById('detach').onclick=async()=>{if(!confirm('确认解除绑定？这会立即阻止控制端访问分片。'))return;const r=await fetch('/api/node-admin/detach',{method:'POST',headers:{'Content-Type':'application/json','X-R2Drive-CSRF':'same-origin'},body:JSON.stringify({confirm:'DETACH'})});const d=await r.json().catch(()=>({}));status.textContent=r.ok?'已解除绑定，请刷新页面。':'解除失败：'+(d.error||r.status)};document.getElementById('create').onclick=async()=>{const r=await fetch('/api/node-admin/enrollment',{method:'POST',headers:{'X-R2Drive-CSRF':'same-origin'}});const d=await r.json().catch(()=>({}));if(!r.ok){status.textContent='创建失败：'+(d.error||r.status);return}const code=document.getElementById('code');code.hidden=false;code.textContent=d.code;status.textContent='请立即复制；关闭或刷新页面后无法再次查询。'};</script></body></html>`;
 }
 
 function renderGuidePage(siteTitle = 'CF-drive') {
@@ -3718,8 +3752,8 @@ function renderDrivePage(folders, files, currentPath, siteTitle, cloudIconUrl = 
           <input class="text-field" id="nodeUrlInput" type="url" placeholder="https://node.example.workers.dev">
         </div>
         <div class="full">
-          <label class="field-label" for="nodeTokenInput">节点密钥</label>
-          <input class="text-field" id="nodeTokenInput" type="password" placeholder="STORAGE_NODE_TOKEN">
+          <label class="field-label" for="nodeTokenInput">一次性配对码</label>
+          <input class="text-field" id="nodeTokenInput" type="password" placeholder="node_enroll_...（在节点的 /node-settings 创建）">
         </div>
       </div>
     </div>
@@ -3771,6 +3805,11 @@ const STORAGE_TOTAL_BYTES = 10 * 1024 * 1024 * 1024; // 10 GB per account/node
 const SESSION_COOKIE = 'r2drive_session';
 const SESSION_DURATION = 7 * 24 * 60 * 60 * 1000;
 const STORAGE_NODES_KV_KEY = 'storage_nodes';
+const NODE_ENROLLMENT_PREFIX = 'r2drive:node-enrollment:';
+const NODE_ENROLLMENT_TTL_SECONDS = 10 * 60;
+const NODE_CREDENTIAL_ROTATION_GRACE_SECONDS = 10 * 60;
+const NODE_CREDENTIAL_ALGORITHM = 'A256GCM';
+const NODE_CREDENTIAL_KEY_ID = 'node-credential-kek-v1';
 const MULTIPART_SESSION_PREFIX = 'multipart_session_';
 const R2_MULTIPART_SESSION_PREFIX = 'r2multipart_session_';
 const D1_KV_TABLE = 'r2drive_kv';
@@ -3941,14 +3980,18 @@ function normalizeNodeUrl(url = '') {
 }
 
 function sanitizeNode(node = {}) {
+  const lifecycle = ['active', 'draining', 'retired'].includes(node.lifecycle) ? node.lifecycle : 'active';
   return {
     id: String(node.id || '').trim(),
     name: String(node.name || '').trim(),
     url: normalizeNodeUrl(node.url),
     token: String(node.token || '').trim(),
+    credential: node.credential && typeof node.credential === 'object' ? structuredClone(node.credential) : null,
     enabled: node.enabled !== false,
     weight: Math.max(1, parseInt(node.weight || '1', 10) || 1),
-    createdAt: String(node.createdAt || '').trim()
+    lifecycle,
+    createdAt: String(node.createdAt || '').trim(),
+    rotatedAt: String(node.rotatedAt || '').trim()
   };
 }
 
@@ -3959,7 +4002,10 @@ function publicNode(node) {
     url: node.url,
     enabled: node.enabled !== false,
     weight: node.weight || 1,
-    createdAt: node.createdAt || ''
+    lifecycle: node.lifecycle || 'active',
+    createdAt: node.createdAt || '',
+    rotatedAt: node.rotatedAt || '',
+    credentialConfigured: !!(node.credential || node.token)
   };
 }
 
@@ -3982,23 +4028,49 @@ async function getStorageNodes(env, includeDisabled = false) {
   try {
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    const nodes = parsed.map(sanitizeNode).filter(node => node.id && node.url && node.token);
-    return includeDisabled ? nodes : nodes.filter(node => node.enabled !== false);
+    const nodes = [];
+    let needsCredentialMigration = false;
+    for (const stored of parsed.map(sanitizeNode)) {
+      if (!stored.id || !stored.url) continue;
+      try {
+        let token;
+        if (stored.credential) token = await decryptNodeCredential(env, stored.credential, stored.id);
+        else {
+          if (!String(env.NODE_CREDENTIAL_KEK || '').trim()) throw new Error('NODE_CREDENTIAL_KEK is not configured for legacy node migration');
+          token = stored.token;
+          needsCredentialMigration = true;
+        }
+        if (!token) continue;
+        nodes.push({ ...stored, token });
+      } catch (err) {
+        console.error('storage node credential unavailable:', stored.id, err?.message || err);
+        throw new Error(`storage node credential unavailable: ${stored.id}`);
+      }
+    }
+    if (needsCredentialMigration) await saveStorageNodes(env, nodes);
+    return includeDisabled ? nodes : nodes.filter(node => node.enabled !== false && node.lifecycle === 'active');
   } catch {
     return [];
   }
 }
 
 async function saveStorageNodes(env, nodes) {
-  await requireFsKv(env).put(STORAGE_NODES_KV_KEY, JSON.stringify(nodes.map(sanitizeNode)));
+  const stored = [];
+  for (const value of nodes) {
+    const node = sanitizeNode(value);
+    if (!node.id || !node.url || !node.token) throw new Error('invalid storage node');
+    const credential = await encryptNodeCredential(env, node.token, node.id);
+    stored.push({ ...node, token: '', credential });
+  }
+  await requireFsKv(env).put(STORAGE_NODES_KV_KEY, JSON.stringify(stored));
 }
 
-async function calculateR2Usage(R2) {
+async function calculateR2Usage(R2, prefix = '') {
   let totalUsed = 0;
   let cursor;
   let safety = 0;
   do {
-    const listed = await R2.list({ cursor, limit: 1000, include: ['customMetadata'] });
+    const listed = await R2.list({ prefix: prefix || undefined, cursor, limit: 1000, include: ['customMetadata'] });
     for (const obj of listed.objects) {
       totalUsed += obj.size;
     }
@@ -4151,6 +4223,55 @@ function base64UrlDecode(value = '') {
 function randomSecret() {
   const bytes = crypto.getRandomValues(new Uint8Array(32));
   return base64UrlEncode(bytes);
+}
+
+function hexToBytes(hex = '') {
+  const normalized = String(hex || '').trim();
+  if (!/^[a-f0-9]{64}$/i.test(normalized)) throw new Error('invalid credential key material');
+  return Uint8Array.from(normalized.match(/.{2}/g).map(part => parseInt(part, 16)));
+}
+
+function nodePartPrefix(controllerId = '') {
+  const id = String(controllerId || '').trim();
+  if (!/^[a-zA-Z0-9_-]{8,128}$/.test(id)) throw new Error('invalid controller id');
+  return `${NODE_PART_PREFIX}${id}_`;
+}
+
+async function nodeCredentialKey(env) {
+  const secret = String(env.NODE_CREDENTIAL_KEK || '').trim();
+  if (!secret) throw new Error('NODE_CREDENTIAL_KEK is not configured');
+  const material = await sha256Hex(`cf-drive:${NODE_CREDENTIAL_KEY_ID}:${secret}`);
+  return crypto.subtle.importKey('raw', hexToBytes(material), { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+}
+
+async function encryptNodeCredential(env, token, nodeId) {
+  const cleanToken = String(token || '').trim();
+  if (!cleanToken) throw new Error('missing node credential');
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const encrypted = await crypto.subtle.encrypt({
+    name: 'AES-GCM',
+    iv,
+    additionalData: new TextEncoder().encode(`cf-drive:node:${nodeId}:v1`)
+  }, await nodeCredentialKey(env), new TextEncoder().encode(cleanToken));
+  return {
+    version: 1,
+    algorithm: NODE_CREDENTIAL_ALGORITHM,
+    keyId: NODE_CREDENTIAL_KEY_ID,
+    iv: base64UrlEncode(iv),
+    ciphertext: base64UrlEncode(new Uint8Array(encrypted))
+  };
+}
+
+async function decryptNodeCredential(env, credential, nodeId) {
+  if (!credential || credential.version !== 1 || credential.algorithm !== NODE_CREDENTIAL_ALGORITHM || credential.keyId !== NODE_CREDENTIAL_KEY_ID) {
+    throw new Error('unsupported node credential');
+  }
+  const decrypted = await crypto.subtle.decrypt({
+    name: 'AES-GCM',
+    iv: base64UrlDecode(credential.iv || ''),
+    additionalData: new TextEncoder().encode(`cf-drive:node:${nodeId}:v1`)
+  }, await nodeCredentialKey(env), base64UrlDecode(credential.ciphertext || ''));
+  return new TextDecoder().decode(decrypted);
 }
 
 async function passwordVerifier(password, salt, iterations = PASSWORD_KDF_ITERATIONS) {
@@ -4384,13 +4505,30 @@ function publicAppSettings(config) {
       maxUploadBytes: Number(config?.webdav?.maxUploadBytes || 100 * 1024 * 1024),
       passwordConfigured: !!config?.webdav?.password?.hash
     },
-    storageNodeTokenConfigured: !!config?.storageNodeToken
+    storageNodeTokenConfigured: !!config?.storageNodeToken,
+    instanceId: String(config?.instanceId || ''),
+    instanceMode: config?.instanceMode === 'managed_node' ? 'managed_node' : 'standalone',
+    managedNode: {
+      controllerUrl: String(config?.managedNode?.controllerUrl || ''),
+      controllerCount: Array.isArray(config?.managedNode?.controllers) ? config.managedNode.controllers.length : 0
+    }
   };
 }
 
 async function getAppConfig(env) {
   const config = await kvGetJson(env, APP_CONFIG_KEY);
-  return config?.version === 1 ? config : null;
+  if (config?.version !== 1) return null;
+  const next = structuredClone(config);
+  let changed = false;
+  if (!next.instanceId) { next.instanceId = crypto.randomUUID(); changed = true; }
+  if (!next.instanceMode) { next.instanceMode = 'standalone'; changed = true; }
+  if (!next.managedNode || typeof next.managedNode !== 'object') {
+    next.managedNode = { controllerUrl: '', controllers: [] };
+    changed = true;
+  }
+  if (!Array.isArray(next.managedNode.controllers)) { next.managedNode.controllers = []; changed = true; }
+  if (changed) await saveAppConfig(env, next);
+  return next;
 }
 
 async function insertAppConfig(env, config) {
@@ -4408,6 +4546,69 @@ async function saveAppConfig(env, config) {
   await kvPutJson(env, APP_CONFIG_KEY, config);
 }
 
+function normalizeControllerUrl(value = '') {
+  const url = normalizeNodeUrl(value);
+  if (!/^https:\/\//i.test(url)) throw new Error('controller URL must use HTTPS');
+  return url;
+}
+
+async function createNodeEnrollment(env) {
+  const code = `node_enroll_${randomSecret()}`;
+  const codeHash = await sha256Hex(code);
+  await kvPutJson(env, NODE_ENROLLMENT_PREFIX + codeHash, {
+    createdAt: new Date().toISOString()
+  }, { expirationTtl: NODE_ENROLLMENT_TTL_SECONDS });
+  return { code, expiresInSeconds: NODE_ENROLLMENT_TTL_SECONDS };
+}
+
+async function enrollController(env, config, body = {}) {
+  const code = String(body.code || '').trim();
+  const controllerId = String(body.controllerId || '').trim();
+  const controllerUrl = normalizeControllerUrl(body.controllerUrl);
+  if (!code || !/^[a-zA-Z0-9_-]{8,128}$/.test(controllerId)) throw new Error('invalid enrollment request');
+  const controllers = Array.isArray(config.managedNode?.controllers) ? config.managedNode.controllers : [];
+  const existing = controllers.findIndex(item => item.id === controllerId);
+  if (config.instanceMode === 'managed_node' && existing < 0) throw new Error('node is already managed by another controller');
+  const codeHash = await sha256Hex(code);
+  const enrollmentKey = NODE_ENROLLMENT_PREFIX + codeHash;
+  const enrollment = await kvGetJson(env, enrollmentKey);
+  if (!enrollment) throw new Error('enrollment code is invalid or expired');
+  await kvDelete(env, enrollmentKey);
+  const token = randomSecret();
+  const record = {
+    id: controllerId,
+    url: controllerUrl,
+    tokenHash: await sha256Hex(token),
+    createdAt: existing >= 0 ? controllers[existing].createdAt : new Date().toISOString(),
+    rotatedAt: new Date().toISOString()
+  };
+  if (existing >= 0) controllers[existing] = record;
+  else controllers.push(record);
+  config.instanceMode = 'managed_node';
+  config.storageNodeToken = '';
+  config.managedNode = { controllerUrl, controllers };
+  await saveAppConfig(env, config);
+  return { nodeId: config.instanceId, token, controllerId, controllerUrl };
+}
+
+async function rotateManagedNodeCredential(env, config, controllerId) {
+  const controllers = Array.isArray(config.managedNode?.controllers) ? config.managedNode.controllers : [];
+  const index = controllers.findIndex(item => item.id === controllerId);
+  if (index < 0) throw new Error('controller not found');
+  const token = randomSecret();
+  const current = controllers[index];
+  controllers[index] = {
+    ...current,
+    tokenHash: await sha256Hex(token),
+    previousTokenHash: current.tokenHash || '',
+    previousTokenExpiresAt: new Date(Date.now() + NODE_CREDENTIAL_ROTATION_GRACE_SECONDS * 1000).toISOString(),
+    rotatedAt: new Date().toISOString()
+  };
+  config.managedNode = { ...config.managedNode, controllers };
+  await saveAppConfig(env, config);
+  return token;
+}
+
 function runtimeEnvFromConfig(env, config) {
   return {
     ...env,
@@ -4421,6 +4622,10 @@ function runtimeEnvFromConfig(env, config) {
     WEBDAV_PASSWORD_SALT: config.webdav?.password?.salt || '',
     WEBDAV_MAX_UPLOAD_BYTES: String(config.webdav?.maxUploadBytes || 100 * 1024 * 1024),
     STORAGE_NODE_TOKEN: config.storageNodeToken || '',
+    STORAGE_NODE_CONTROLLERS: Array.isArray(config.managedNode?.controllers) ? config.managedNode.controllers : [],
+    INSTANCE_ID: config.instanceId || '',
+    INSTANCE_MODE: config.instanceMode === 'managed_node' ? 'managed_node' : 'standalone',
+    MANAGED_NODE_CONTROLLER_URL: config.managedNode?.controllerUrl || '',
     SITE_TITLE: normalizeSiteTitle(config.siteTitle),
     CLOUD_ICON_URL: config.cloudIconUrl || '',
     LOGIN_BACKGROUND_URL: config.loginBackgroundUrl || ''
@@ -4482,7 +4687,10 @@ async function createInitialAppConfig(body = {}) {
     cloudIconUrl: '',
     loginBackgroundUrl: '',
     webdav: { enabled: false, username: '', password: null, maxUploadBytes: 100 * 1024 * 1024 },
-    storageNodeToken: randomSecret()
+    storageNodeToken: '',
+    instanceId: crypto.randomUUID(),
+    instanceMode: 'standalone',
+    managedNode: { controllerUrl: '', controllers: [] }
   };
 }
 
@@ -5957,12 +6165,22 @@ function getNodeAuthHeaders(node, extra = {}) {
   };
 }
 
-function isNodeRequestAuthorized(request, env) {
-  const expected = env.STORAGE_NODE_TOKEN;
-  if (!expected) return false;
+async function nodeRequestPrincipal(request, env) {
   const header = request.headers.get('Authorization') || '';
   const match = /^Bearer\s+(.+)$/i.exec(header);
-  return !!match && constantTimeEqual(match[1], expected);
+  if (!match) return null;
+  const token = match[1];
+  const tokenHash = await sha256Hex(token);
+  for (const controller of Array.isArray(env.STORAGE_NODE_CONTROLLERS) ? env.STORAGE_NODE_CONTROLLERS : []) {
+    if (controller?.tokenHash && constantTimeEqual(tokenHash, controller.tokenHash)) return { type: 'controller', controller };
+    const graceExpiry = Date.parse(controller?.previousTokenExpiresAt || '');
+    if (controller?.previousTokenHash && Number.isFinite(graceExpiry) && graceExpiry > Date.now() && constantTimeEqual(tokenHash, controller.previousTokenHash)) {
+      return { type: 'controller', controller };
+    }
+  }
+  const expected = env.STORAGE_NODE_TOKEN;
+  if (expected && constantTimeEqual(token, expected)) return { type: 'legacy' };
+  return null;
 }
 
 function nodeCorsHeaders(extra = {}) {
@@ -5994,6 +6212,23 @@ async function readManifestObject(obj) {
 
 function isManifestFile(manifest) {
   return manifest && manifest.type === 'distributed-file' && Array.isArray(manifest.parts);
+}
+
+async function storageNodeHasManifestReferences(R2, nodeId) {
+  let cursor;
+  let pages = 0;
+  do {
+    const listed = await R2.list({ cursor, limit: 1000, include: ['customMetadata'] });
+    for (const object of listed.objects || []) {
+      if (!hasManifestMetadata(object)) continue;
+      const manifest = await readManifestObject(await R2.get(object.key));
+      if (isManifestFile(manifest) && manifest.parts.some(part => part.nodeId === nodeId)) return true;
+    }
+    cursor = listed.cursor;
+    pages++;
+    if (pages > 1000) throw new Error('too many manifest pages');
+  } while (cursor);
+  return false;
 }
 
 function manifestPartsSize(manifest) {
@@ -6316,18 +6551,20 @@ async function deleteManifestParts(manifest, env, preservedPartIds = new Set(), 
   }
 }
 
-async function handleStorageNodeApi(request, env) {
+async function handleStorageNodeApi(request, env, appConfig = null) {
   if (request.method === 'OPTIONS') {
     return new Response(null, { status: 204, headers: nodeCorsHeaders({ 'Content-Length': '0' }) });
   }
-  if (!env.STORAGE_NODE_TOKEN) {
+  if (!env.STORAGE_NODE_TOKEN && (!Array.isArray(env.STORAGE_NODE_CONTROLLERS) || !env.STORAGE_NODE_CONTROLLERS.length)) {
     return new Response('Storage node is not configured', { status: 503, headers: nodeCorsHeaders() });
   }
-  if (!isNodeRequestAuthorized(request, env)) {
+  const principal = await nodeRequestPrincipal(request, env);
+  if (!principal) {
     return new Response('Unauthorized', { status: 401, headers: nodeCorsHeaders() });
   }
   const R2 = env.R2_BUCKET;
   const url = new URL(request.url);
+  const partPrefix = principal.type === 'controller' ? nodePartPrefix(principal.controller.id) : '';
 
   if (url.pathname === '/api/node/ping') {
     return new Response(JSON.stringify({ ok: true, name: env.SITE_TITLE || 'R2 Storage Node' }), {
@@ -6335,8 +6572,16 @@ async function handleStorageNodeApi(request, env) {
     });
   }
 
+  if (url.pathname === '/api/node/credential/rotate' && request.method === 'POST') {
+    if (principal.type !== 'controller' || !appConfig) return new Response('Unsupported', { status: 409, headers: nodeCorsHeaders() });
+    const token = await rotateManagedNodeCredential(env, appConfig, principal.controller.id);
+    return new Response(JSON.stringify({ ok: true, token, controllerId: principal.controller.id }), {
+      headers: nodeCorsHeaders({ 'Content-Type': 'application/json;charset=UTF-8', 'Cache-Control': 'no-store' })
+    });
+  }
+
   if (url.pathname === '/api/node/storage') {
-    const used = await calculateR2Usage(R2);
+    const used = await calculateR2Usage(R2, partPrefix);
     return new Response(JSON.stringify({ ok: true, used, total: STORAGE_TOTAL_BYTES }), {
       headers: nodeCorsHeaders({ 'Content-Type': 'application/json;charset=UTF-8' })
     });
@@ -6345,7 +6590,7 @@ async function handleStorageNodeApi(request, env) {
   if (url.pathname === '/api/node/r2-list' && request.method === 'GET') {
     const cursor = url.searchParams.get('cursor') || undefined;
     const limit = Math.min(200, Math.max(1, parseInt(url.searchParams.get('limit') || '100', 10) || 100));
-    const listed = await R2.list({ cursor, limit, include: ['customMetadata'] });
+    const listed = await R2.list({ prefix: partPrefix || undefined, cursor, limit, include: ['customMetadata'] });
     const objects = (listed.objects || []).map(obj => ({
       key: obj.key,
       size: obj.size || 0,
@@ -6362,6 +6607,7 @@ async function handleStorageNodeApi(request, env) {
 
   const key = url.searchParams.get('key');
   if (!key || key.includes('..')) return new Response('Missing key', { status: 400, headers: nodeCorsHeaders() });
+  if (partPrefix && !key.startsWith(partPrefix)) return new Response('Forbidden key', { status: 403, headers: nodeCorsHeaders() });
 
   if (url.pathname === '/api/node/part' && request.method === 'PUT') {
     const expectedSize = Number(url.searchParams.get('size') || 0);
@@ -6890,8 +7136,31 @@ export default {
     cloudIconUrl = env.CLOUD_ICON_URL || '';
     loginBackgroundUrl = env.LOGIN_BACKGROUND_URL || '';
 
+    if (path === '/api/node/enroll' && request.method === 'POST') {
+      if (!appConfig) return jsonResponse({ ok: false, error: 'legacy configuration migration required' }, 409);
+      try {
+        const enrollment = await enrollController(env, appConfig, await request.json().catch(() => ({})));
+        appConfig = await getAppConfig(env);
+        return jsonResponse({ ok: true, nodeId: enrollment.nodeId, token: enrollment.token, controllerId: enrollment.controllerId }, 200, { 'Cache-Control': 'no-store' });
+      } catch (err) {
+        return jsonResponse({ ok: false, error: err?.message || 'node enrollment failed' }, 400);
+      }
+    }
+
     if (path.startsWith('/api/node/')) {
-      return handleStorageNodeApi(request, env);
+      return handleStorageNodeApi(request, env, appConfig);
+    }
+
+    if (appConfig?.instanceMode === 'managed_node') {
+      const allowed = path === '/login' || path === '/logout' || path === '/settings' || path === '/node-settings' ||
+        path === '/api/login' || path === '/api/logout' || path === '/api/settings' || path.startsWith('/api/node-admin/');
+      if (path === '/' && request.method === 'GET' && appConfig.managedNode?.controllerUrl) {
+        return Response.redirect(appConfig.managedNode.controllerUrl, 302);
+      }
+      if (!allowed) {
+        if (path.startsWith('/api/')) return jsonResponse({ ok: false, error: 'managed storage node does not provide drive management APIs' }, 403);
+        return Response.redirect(new URL('/node-settings', url).toString(), 302);
+      }
     }
 
     if (path === WEBDAV_PREFIX || path.startsWith(WEBDAV_PREFIX + '/')) {
@@ -6934,9 +7203,37 @@ export default {
       });
     }
 
+    if (path === '/node-settings' && request.method === 'GET') {
+      if (!await isAuthenticated(request, env)) return Response.redirect(new URL('/login', url).toString(), 302);
+      if (!appConfig) return new Response('旧版实例需先迁移至 D1 配置。', { status: 409 });
+      return htmlResponse(renderNodeMaintenancePage(publicAppSettings(appConfig), siteTitle));
+    }
+
+    if (path === '/api/node-admin/enrollment' && request.method === 'POST') {
+      if (!await isAuthenticated(request, env)) return new Response('Unauthorized', { status: 401 });
+      if (!isSameOriginRequest(request)) return csrfErrorResponse();
+      if (!appConfig) return jsonResponse({ ok: false, error: 'legacy configuration migration required' }, 409);
+      if (appConfig.instanceMode === 'managed_node') return jsonResponse({ ok: false, error: 'managed node cannot create a second controller enrollment' }, 409);
+      return jsonResponse({ ok: true, ...await createNodeEnrollment(env) });
+    }
+
+    if (path === '/api/node-admin/detach' && request.method === 'POST') {
+      if (!await isAuthenticated(request, env)) return new Response('Unauthorized', { status: 401 });
+      if (!isSameOriginRequest(request)) return csrfErrorResponse();
+      if (!appConfig) return jsonResponse({ ok: false, error: 'legacy configuration migration required' }, 409);
+      const body = await request.json().catch(() => ({}));
+      if (body.confirm !== 'DETACH') return jsonResponse({ ok: false, error: 'explicit DETACH confirmation is required' }, 400);
+      if (appConfig.instanceMode !== 'managed_node') return jsonResponse({ ok: false, error: 'instance is not a managed node' }, 409);
+      appConfig.instanceMode = 'standalone';
+      appConfig.managedNode = { controllerUrl: '', controllers: [] };
+      await saveAppConfig(env, appConfig);
+      return jsonResponse({ ok: true, warning: 'controller credentials revoked; shared parts remain in R2 until the controller drains them' });
+    }
+
     if (path === '/settings' && request.method === 'GET') {
       if (!await isAuthenticated(request, env)) return Response.redirect(new URL('/login', url).toString(), 302);
       if (!appConfig) return new Response('旧版实例需先迁移至 D1 配置。', { status: 409 });
+      if (appConfig.instanceMode === 'managed_node') return htmlResponse(renderNodeMaintenancePage(publicAppSettings(appConfig), siteTitle));
       return htmlResponse(renderSettingsPage(publicAppSettings(appConfig), siteTitle));
     }
 
@@ -6959,6 +7256,7 @@ export default {
       if (!await isAuthenticated(request, env)) return new Response('Unauthorized', { status: 401 });
       if (!isSameOriginRequest(request)) return csrfErrorResponse();
       if (!appConfig) return jsonResponse({ ok: false, error: 'legacy configuration migration required' }, 409);
+      if (appConfig.instanceMode === 'managed_node') return jsonResponse({ ok: false, error: 'managed node settings are restricted; use /node-settings' }, 403);
       const body = await request.json().catch(() => ({}));
       const next = structuredClone(appConfig);
       next.siteTitle = normalizeSiteTitle(body.siteTitle);
@@ -7197,6 +7495,7 @@ export default {
 
     if (path === '/api/storage-nodes' && request.method === 'POST') {
       try {
+        if (!String(env.NODE_CREDENTIAL_KEK || '').trim()) return jsonResponse({ ok: false, error: 'NODE_CREDENTIAL_KEK is not configured' }, 503);
         const body = await request.json().catch(() => ({}));
         const nodes = await getStorageNodes(env, true);
         const existing = body.id ? nodes.find(item => item.id === body.id) : null;
@@ -7221,12 +7520,85 @@ export default {
       }
     }
 
+    if (path === '/api/storage-nodes/enroll' && request.method === 'POST') {
+      try {
+        if (!appConfig) return jsonResponse({ ok: false, error: 'legacy configuration migration required' }, 409);
+        if (!String(env.NODE_CREDENTIAL_KEK || '').trim()) return jsonResponse({ ok: false, error: 'NODE_CREDENTIAL_KEK is not configured' }, 503);
+        const body = await request.json().catch(() => ({}));
+        const nodeUrl = normalizeControllerUrl(body.url);
+        const name = String(body.name || '').trim();
+        const code = String(body.enrollmentCode || '').trim();
+        if (!name || !nodeUrl || !code) return jsonResponse({ ok: false, error: 'missing fields' }, 400);
+        const response = await fetch(nodeUrl + '/api/node/enroll', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code, controllerId: appConfig.instanceId, controllerUrl: url.origin })
+        });
+        const enrolled = await response.json().catch(() => ({}));
+        if (!response.ok || !enrolled.ok || !enrolled.token || !enrolled.nodeId) {
+          return jsonResponse({ ok: false, error: enrolled.error || 'node enrollment failed' }, 502);
+        }
+        const nodes = await getStorageNodes(env, true);
+        const existing = nodes.findIndex(item => item.id === enrolled.nodeId);
+        const node = sanitizeNode({
+          id: enrolled.nodeId,
+          name,
+          url: nodeUrl,
+          token: enrolled.token,
+          enabled: true,
+          lifecycle: 'active',
+          weight: body.weight,
+          createdAt: existing >= 0 ? nodes[existing].createdAt : new Date().toISOString(),
+          rotatedAt: new Date().toISOString()
+        });
+        if (existing >= 0) nodes[existing] = node;
+        else nodes.push(node);
+        await saveStorageNodes(env, nodes);
+        return jsonResponse({ ok: true, node: publicNode(node) });
+      } catch (err) {
+        return jsonResponse({ ok: false, error: err?.message || 'node enrollment failed' }, 400);
+      }
+    }
+
+    if (path === '/api/storage-nodes/rotate' && request.method === 'POST') {
+      try {
+        const id = url.searchParams.get('id') || '';
+        const nodes = await getStorageNodes(env, true);
+        const index = nodes.findIndex(item => item.id === id);
+        if (index < 0) return jsonResponse({ ok: false, error: 'not found' }, 404);
+        const node = nodes[index];
+        const response = await fetch(node.url + '/api/node/credential/rotate', { method: 'POST', headers: getNodeAuthHeaders(node) });
+        const rotated = await response.json().catch(() => ({}));
+        if (!response.ok || !rotated.ok || !rotated.token) return jsonResponse({ ok: false, error: rotated.error || 'node rotation failed' }, 502);
+        nodes[index] = { ...node, token: rotated.token, rotatedAt: new Date().toISOString() };
+        await saveStorageNodes(env, nodes);
+        return jsonResponse({ ok: true, node: publicNode(nodes[index]) });
+      } catch (err) {
+        return jsonResponse({ ok: false, error: err?.message || 'node rotation failed' }, 400);
+      }
+    }
+
+    if (path === '/api/storage-nodes/drain' && request.method === 'POST') {
+      const id = url.searchParams.get('id') || '';
+      const nodes = await getStorageNodes(env, true);
+      const index = nodes.findIndex(item => item.id === id);
+      if (index < 0) return jsonResponse({ ok: false, error: 'not found' }, 404);
+      nodes[index] = { ...nodes[index], enabled: false, lifecycle: 'draining' };
+      await saveStorageNodes(env, nodes);
+      return jsonResponse({ ok: true, node: publicNode(nodes[index]) });
+    }
+
     if (path === '/api/storage-nodes' && request.method === 'DELETE') {
       try {
         const id = url.searchParams.get('id');
         if (!id) return jsonResponse({ ok: false, error: 'missing id' }, 400);
         const nodes = await getStorageNodes(env, true);
-        await saveStorageNodes(env, nodes.filter(node => node.id !== id));
+        const node = nodes.find(item => item.id === id);
+        if (!node) return jsonResponse({ ok: false, error: 'not found' }, 404);
+        if (await storageNodeHasManifestReferences(R2, id)) {
+          return jsonResponse({ ok: false, error: 'node still has file references; drain and migrate it before removal' }, 409);
+        }
+        await saveStorageNodes(env, nodes.filter(item => item.id !== id));
         return jsonResponse({ ok: true });
       } catch (err) {
         console.error('deleteStorageNode failed:', err?.message || err);
@@ -7545,10 +7917,11 @@ export default {
       }
       const allocatedNodes = await allocateDistributedParts(env, nodes, partSizes);
       const parts = [];
+      const controllerPartPrefix = nodePartPrefix(appConfig?.instanceId || 'legacy-controller');
 
       for (let partNumber = 1; partNumber <= totalParts; partNumber++) {
         const node = allocatedNodes[partNumber - 1];
-        const partKey = NODE_PART_PREFIX + sessionId + '_' + String(partNumber).padStart(6, '0');
+        const partKey = controllerPartPrefix + sessionId + '_' + String(partNumber).padStart(6, '0');
         const partSize = partSizes[partNumber - 1];
         const isMain = node.id === MAIN_STORAGE_NODE_ID || node.storageType === 'r2';
         const uploadToken = crypto.randomUUID().replace(/-/g, '');
