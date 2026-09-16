@@ -4052,6 +4052,7 @@ function sanitizeNode(node = {}) {
     credential: node.credential && typeof node.credential === 'object' ? structuredClone(node.credential) : null,
     enabled: node.enabled !== false,
     weight: Math.max(1, parseInt(node.weight || '1', 10) || 1),
+    faultDomain: String(node.faultDomain || '').trim().slice(0, 100),
     lifecycle,
     createdAt: String(node.createdAt || '').trim(),
     rotatedAt: String(node.rotatedAt || '').trim()
@@ -4065,6 +4066,7 @@ function publicNode(node) {
     url: node.url,
     enabled: node.enabled !== false,
     weight: node.weight || 1,
+    faultDomain: node.faultDomain || '',
     lifecycle: node.lifecycle || 'active',
     createdAt: node.createdAt || '',
     rotatedAt: node.rotatedAt || '',
@@ -4079,6 +4081,7 @@ function mainStorageNode() {
     url: '',
     token: '',
     enabled: true,
+    faultDomain: '',
     createdAt: '1970-01-01T00:00:00.000Z',
     storageType: 'r2'
   };
@@ -4612,6 +4615,9 @@ function defaultStoragePolicy() {
     targetMode: null,
     status: 'unprotected',
     layoutVersion: 1,
+    primaryFaultDomain: '',
+    mirrorNodeId: '',
+    mirrorFaultDomain: '',
     updatedAt: ''
   };
 }
@@ -4623,6 +4629,9 @@ function normalizeStoragePolicy(value) {
   policy.targetMode = policy.targetMode === 'mirror' || policy.targetMode === 'stripe' ? policy.targetMode : null;
   policy.status = String(policy.status || 'unprotected');
   policy.layoutVersion = Math.max(1, Number(policy.layoutVersion) || 1);
+  policy.primaryFaultDomain = String(policy.primaryFaultDomain || '').trim().slice(0, 100);
+  policy.mirrorNodeId = String(policy.mirrorNodeId || '').trim();
+  policy.mirrorFaultDomain = String(policy.mirrorFaultDomain || '').trim().slice(0, 100);
   return policy;
 }
 
@@ -4634,6 +4643,9 @@ function publicStoragePolicy(value) {
     targetMode: policy.targetMode,
     status: policy.status,
     layoutVersion: policy.layoutVersion,
+    primaryFaultDomain: policy.primaryFaultDomain,
+    mirrorNodeId: policy.mirrorNodeId,
+    mirrorFaultDomain: policy.mirrorFaultDomain,
     updatedAt: policy.updatedAt || ''
   };
 }
@@ -7827,6 +7839,37 @@ export default {
           mirror: { write: false, recovery: false }
         }
       });
+    }
+
+    if (path === '/api/storage-policy/convert' && request.method === 'POST') {
+      if (!appConfig) return jsonResponse({ ok: false, error: 'legacy configuration migration required' }, 409);
+      const body = await request.json().catch(() => ({}));
+      const targetMode = String(body.targetMode || '').trim();
+      if (targetMode !== 'mirror') return jsonResponse({ ok: false, error: 'only Stripe-to-Mirror preparation is currently supported' }, 409);
+      if (body.confirm !== 'MIRROR') return jsonResponse({ ok: false, error: 'explicit MIRROR confirmation is required' }, 400);
+      const primaryFaultDomain = String(body.primaryFaultDomain || '').trim().slice(0, 100);
+      const mirrorFaultDomain = String(body.mirrorFaultDomain || '').trim().slice(0, 100);
+      const mirrorNodeId = String(body.mirrorNodeId || '').trim();
+      if (!primaryFaultDomain || !mirrorFaultDomain || primaryFaultDomain === mirrorFaultDomain) {
+        return jsonResponse({ ok: false, error: 'primary and mirror fault domains must be non-empty and different' }, 400);
+      }
+      const nodes = await getStorageNodes(env, true);
+      const mirrorNode = nodes.find(node => node.id === mirrorNodeId && node.enabled !== false && node.lifecycle === 'active');
+      if (!mirrorNode) return jsonResponse({ ok: false, error: 'mirror node must be active' }, 409);
+      mirrorNode.faultDomain = mirrorFaultDomain;
+      await saveStorageNodes(env, nodes);
+      appConfig.storagePolicy = {
+        ...normalizeStoragePolicy(appConfig.storagePolicy),
+        mode: 'stripe',
+        targetMode: 'mirror',
+        status: 'converting_to_mirror',
+        primaryFaultDomain,
+        mirrorNodeId,
+        mirrorFaultDomain,
+        updatedAt: new Date().toISOString()
+      };
+      await saveAppConfig(env, appConfig);
+      return jsonResponse({ ok: true, policy: publicStoragePolicy(appConfig.storagePolicy), warning: 'Mirror is not active until every existing Stripe manifest has a verified second replica.' }, 202);
     }
 
     if (path === '/api/storage-jobs' && request.method === 'GET') {

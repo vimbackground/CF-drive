@@ -114,6 +114,7 @@
 | `POST /api/storage-nodes/test?id=<id>` | 检查 ping 与容量接口。 |
 | `GET /api/storage-nodes/r2-files?id=main&cursor=&limit=100` | 查看主控或指定节点对象；`limit` 范围 1–200。 |
 | `GET /api/storage-policy` | 返回当前存储策略及已实现能力；当前 Mirror 能力明确为不可用。 |
+| `POST /api/storage-policy/convert` | 以 `{targetMode:"mirror",mirrorNodeId,primaryFaultDomain,mirrorFaultDomain,confirm:"MIRROR"}` 进入转换准备；两个故障域必须由管理员声明且不同。 |
 | `GET /api/storage-jobs` | 列出持久化存储作业及其进度。 |
 | `POST /api/storage-jobs/<id>/run` | 执行一个归集分片；复制、分段 SHA-256 校验、切换 manifest 并清理源分片。 |
 | `POST /api/storage-jobs/<id>/pause\|resume\|cancel` | 暂停、继续或取消尚未完成的归集作业；取消不会删除源分片。 |

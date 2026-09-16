@@ -104,11 +104,16 @@ test('owner-signed setup stores configuration in D1 and enables password login',
   const settingsBody = await settings.json();
   assert.equal(settingsBody.settings.siteTitle, 'My CF-drive');
   assert.deepEqual(settingsBody.settings.storagePolicy, {
-    version: 1, mode: 'stripe', targetMode: null, status: 'unprotected', layoutVersion: 1, updatedAt: settingsBody.settings.storagePolicy.updatedAt
+    version: 1, mode: 'stripe', targetMode: null, status: 'unprotected', layoutVersion: 1,
+    primaryFaultDomain: '', mirrorNodeId: '', mirrorFaultDomain: '', updatedAt: settingsBody.settings.storagePolicy.updatedAt
   });
   const policy = await worker.fetch(apiRequest('GET', '/api/storage-policy', undefined, cookie), env, ctx);
   assert.equal(policy.status, 200);
   assert.equal((await policy.json()).capabilities.mirror.write, false);
+  const invalidMirror = await worker.fetch(apiRequest('POST', '/api/storage-policy/convert', {
+    targetMode: 'mirror', confirm: 'MIRROR', primaryFaultDomain: 'account-a', mirrorFaultDomain: 'account-a', mirrorNodeId: 'missing'
+  }, cookie), env, ctx);
+  assert.equal(invalidMirror.status, 400);
 
   const updated = await worker.fetch(apiRequest('PUT', '/api/settings', {
     siteTitle: 'Configured CF-drive',
