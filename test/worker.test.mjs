@@ -233,6 +233,29 @@ test('one-time enrollment makes B a scoped managed node controlled by A', async 
     const drainedList = await worker.fetch(apiRequest('GET', '/api/storage-nodes', undefined, controller.cookie), controller.env, ctx);
     assert.equal((await drainedList.json()).nodes[0].lifecycle, 'draining');
 
+    const controllerSettings = await worker.fetch(apiRequest('GET', '/api/settings', undefined, controller.cookie), controller.env, ctx);
+    const controllerId = (await controllerSettings.json()).settings.instanceId;
+    const sourceKey = `r2drive_node_part_${controllerId}_consolidation_fixture`;
+    await node.env.R2_BUCKET.put(sourceKey, new Uint8Array([1, 2, 3]), { httpMetadata: { contentType: 'application/octet-stream' } });
+    await controller.env.R2_BUCKET.put('consolidation-manifest', JSON.stringify({
+      type: 'distributed-file', version: 2, layoutVersion: 1, mode: 'stripe', generation: 1, size: 3,
+      parts: [{ partNumber: 1, partId: 'part-consolidation-fixture', size: 3, key: sourceKey, storageType: 'node', nodeId, nodeUrl: 'https://node.example', replicas: [{ storageId: nodeId, key: sourceKey, storageType: 'node', nodeId, nodeUrl: 'https://node.example', state: 'healthy' }] }]
+    }), { httpMetadata: { contentType: 'application/vnd.r2drive.manifest+json' }, customMetadata: { r2driveManifest: '1' } });
+    const createdJob = await worker.fetch(apiRequest('POST', '/api/storage-nodes/consolidate?id=' + encodeURIComponent(nodeId), undefined, controller.cookie), controller.env, ctx);
+    assert.equal(createdJob.status, 202);
+    const job = (await createdJob.json()).job;
+    const paused = await worker.fetch(apiRequest('POST', '/api/storage-jobs/' + encodeURIComponent(job.id) + '/pause', undefined, controller.cookie), controller.env, ctx);
+    assert.equal((await paused.json()).job.status, 'paused');
+    const resumed = await worker.fetch(apiRequest('POST', '/api/storage-jobs/' + encodeURIComponent(job.id) + '/resume', undefined, controller.cookie), controller.env, ctx);
+    assert.equal((await resumed.json()).job.status, 'queued');
+    const runJob = await worker.fetch(apiRequest('POST', '/api/storage-jobs/' + encodeURIComponent(job.id) + '/run', undefined, controller.cookie), controller.env, ctx);
+    assert.equal(runJob.status, 200);
+    assert.equal((await runJob.json()).job.status, 'completed');
+    const migrated = await new Response((await controller.env.R2_BUCKET.get('consolidation-manifest')).body).json();
+    assert.equal(migrated.parts[0].nodeId, 'main');
+    assert.equal(migrated.parts[0].replicas[0].storageId, 'main');
+    assert.equal(await node.env.R2_BUCKET.head(sourceKey), null);
+
     const ordinaryApi = await worker.fetch(new Request('https://node.example/api/list', { headers: { Cookie: node.cookie } }), node.env, ctx);
     assert.equal(ordinaryApi.status, 403);
     const wrongToken = await worker.fetch(new Request('https://node.example/api/node/ping', { headers: { Authorization: 'Bearer wrong' } }), node.env, ctx);

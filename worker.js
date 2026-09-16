@@ -3805,6 +3805,8 @@ const STORAGE_TOTAL_BYTES = 10 * 1024 * 1024 * 1024; // 10 GB per account/node
 const SESSION_COOKIE = 'r2drive_session';
 const SESSION_DURATION = 7 * 24 * 60 * 60 * 1000;
 const STORAGE_NODES_KV_KEY = 'storage_nodes';
+const STORAGE_JOBS_KV_KEY = 'r2drive:storage-jobs:v1';
+const STORAGE_JOB_VERIFY_CHUNK_BYTES = 8 * 1024 * 1024;
 const NODE_ENROLLMENT_PREFIX = 'r2drive:node-enrollment:';
 const NODE_ENROLLMENT_TTL_SECONDS = 10 * 60;
 const NODE_CREDENTIAL_ROTATION_GRACE_SECONDS = 10 * 60;
@@ -4066,6 +4068,32 @@ async function saveStorageNodes(env, nodes) {
     stored.push({ ...node, token: '', credential });
   }
   await requireFsKv(env).put(STORAGE_NODES_KV_KEY, JSON.stringify(stored));
+}
+
+async function getStorageJobs(env) {
+  const jobs = await kvGetJson(env, STORAGE_JOBS_KV_KEY);
+  return Array.isArray(jobs) ? jobs : [];
+}
+
+async function saveStorageJobs(env, jobs) {
+  await kvPutJson(env, STORAGE_JOBS_KV_KEY, jobs);
+}
+
+function publicStorageJob(job) {
+  return {
+    id: job.id,
+    type: job.type,
+    nodeId: job.nodeId,
+    status: job.status,
+    totalItems: job.items?.length || 0,
+    completedItems: (job.items || []).filter(item => item.status === 'completed').length,
+    failedItems: (job.items || []).filter(item => item.status === 'failed').length,
+    totalBytes: job.totalBytes || 0,
+    completedBytes: job.completedBytes || 0,
+    createdAt: job.createdAt,
+    updatedAt: job.updatedAt,
+    error: job.error || ''
+  };
 }
 
 async function calculateR2Usage(R2, prefix = '') {
@@ -6288,6 +6316,133 @@ async function storageNodeHasManifestReferences(R2, nodeId) {
   return false;
 }
 
+async function createConsolidationJob(env, R2, nodeId) {
+  const node = (await getStorageNodes(env, true)).find(item => item.id === nodeId);
+  if (!node) throw new Error('storage node not found');
+  if (node.lifecycle !== 'draining') throw new Error('node must be draining before consolidation');
+  const items = [];
+  let cursor;
+  do {
+    const listed = await R2.list({ cursor, limit: 1000, include: ['customMetadata'] });
+    for (const object of listed.objects || []) {
+      if (!hasManifestMetadata(object)) continue;
+      const manifest = await readManifestObject(await R2.get(object.key));
+      if (!isManifestFile(manifest)) continue;
+      for (const part of manifest.parts) {
+        const replica = manifestPartReplicas(part).find(value => (value.storageId || value.nodeId) === nodeId);
+        if (!replica) continue;
+        items.push({
+          manifestKey: object.key,
+          partId: part.partId || '',
+          partNumber: part.partNumber,
+          sourceKey: replica.key || part.key,
+          size: Number(part.size || 0),
+          status: 'pending',
+          error: ''
+        });
+      }
+    }
+    cursor = listed.cursor;
+  } while (cursor);
+  const totalBytes = items.reduce((sum, item) => sum + item.size, 0);
+  const localUsed = await calculateR2Usage(R2);
+  if (localUsed + totalBytes > STORAGE_TOTAL_BYTES) throw new Error('main storage has insufficient capacity for consolidation');
+  const now = new Date().toISOString();
+  const job = {
+    id: crypto.randomUUID(),
+    type: 'consolidate-node',
+    nodeId,
+    status: items.length ? 'queued' : 'completed',
+    items,
+    totalBytes,
+    completedBytes: 0,
+    createdAt: now,
+    updatedAt: now,
+    error: ''
+  };
+  const jobs = await getStorageJobs(env);
+  jobs.push(job);
+  await saveStorageJobs(env, jobs);
+  return job;
+}
+
+async function verifyConsolidatedPart(env, R2, node, sourceKey, targetKey, size) {
+  for (let offset = 0; offset < size; offset += STORAGE_JOB_VERIFY_CHUNK_BYTES) {
+    const length = Math.min(STORAGE_JOB_VERIFY_CHUNK_BYTES, size - offset);
+    const source = await fetchNodePartBytes({ nodeUrl: node.url, token: node.token, key: sourceKey }, { start: offset, end: offset + length - 1, length });
+    const target = await fetchR2PartBytes(R2, { key: targetKey }, { start: offset, end: offset + length - 1, length });
+    const [sourceDigest, targetDigest] = await Promise.all([
+      crypto.subtle.digest('SHA-256', source), crypto.subtle.digest('SHA-256', target)
+    ]);
+    if (!constantTimeEqual(bytesToHex(sourceDigest), bytesToHex(targetDigest))) throw new Error('source and target checksum differ');
+  }
+}
+
+async function runConsolidationJob(env, R2, jobId) {
+  const jobs = await getStorageJobs(env);
+  const job = jobs.find(item => item.id === jobId && item.type === 'consolidate-node');
+  if (!job) throw new Error('storage job not found');
+  if (job.status === 'completed') return job;
+  if (job.status === 'paused' || job.status === 'cancelled') return job;
+  if (job.status === 'paused' || job.status === 'cancelled') return job;
+  const node = (await getStorageNodes(env, true)).find(item => item.id === job.nodeId);
+  if (!node) throw new Error('source node credential is unavailable');
+  const item = (job.items || []).find(value => value.status === 'pending' || value.status === 'failed');
+  if (!item) {
+    job.status = 'completed';
+    job.updatedAt = new Date().toISOString();
+    await saveStorageJobs(env, jobs);
+    return job;
+  }
+  job.status = 'copying';
+  item.status = 'copying';
+  job.updatedAt = new Date().toISOString();
+  await saveStorageJobs(env, jobs);
+  try {
+    const object = await R2.get(item.manifestKey);
+    const manifest = await readManifestObject(object);
+    if (!isManifestFile(manifest)) throw new Error('manifest no longer exists');
+    const part = manifest.parts.find(value => (item.partId && value.partId === item.partId) || (!item.partId && value.partNumber === item.partNumber));
+    if (!part || !manifestPartReplicas(part).some(value => (value.storageId || value.nodeId) === node.id && (value.key || part.key) === item.sourceKey)) {
+      const cleanup = await fetch(node.url.replace(/\/+$/, '') + '/api/node/part?key=' + encodeURIComponent(item.sourceKey), { method: 'DELETE', headers: getNodeAuthHeaders(node) });
+      if (!cleanup.ok && cleanup.status !== 404) throw new Error('source cleanup retry failed');
+      item.status = 'completed';
+      item.error = 'source placement was already replaced';
+    } else {
+      const targetKey = nodePartPrefix(env.INSTANCE_ID || 'legacy-controller') + 'consolidated_' + job.id.replace(/-/g, '') + '_' + String(item.partNumber).padStart(6, '0');
+      const sourceResponse = await fetch(node.url.replace(/\/+$/, '') + '/api/node/part?key=' + encodeURIComponent(item.sourceKey), { headers: getNodeAuthHeaders(node) });
+      if (!sourceResponse.ok || !sourceResponse.body) throw new Error('failed to copy source part');
+      await R2.put(targetKey, sourceResponse.body, { httpMetadata: { contentType: 'application/octet-stream' } });
+      const targetMeta = await R2.head(targetKey);
+      if (!targetMeta || Number(targetMeta.size) !== item.size) throw new Error('target part size mismatch');
+      await verifyConsolidatedPart(env, R2, node, item.sourceKey, targetKey, item.size);
+      const replacement = { storageId: MAIN_STORAGE_NODE_ID, nodeId: MAIN_STORAGE_NODE_ID, storageType: 'r2', key: targetKey, nodeName: '主控账号', nodeUrl: '', state: 'healthy' };
+      part.key = targetKey;
+      part.storageType = 'r2';
+      part.nodeId = MAIN_STORAGE_NODE_ID;
+      part.nodeName = '主控账号';
+      part.nodeUrl = '';
+      part.replicas = [replacement];
+      manifest.generation = Math.max(1, Number(manifest.generation) || 1) + 1;
+      await R2.put(item.manifestKey, JSON.stringify(manifest), { httpMetadata: { contentType: MANIFEST_CONTENT_TYPE }, customMetadata: { r2driveManifest: '1', r2driveSize: String(manifest.size) } });
+      const deleted = await fetch(node.url.replace(/\/+$/, '') + '/api/node/part?key=' + encodeURIComponent(item.sourceKey), { method: 'DELETE', headers: getNodeAuthHeaders(node) });
+      if (!deleted.ok) throw new Error('manifest switched but source cleanup failed');
+      item.status = 'completed';
+      item.error = '';
+      job.completedBytes = (job.items || []).filter(value => value.status === 'completed').reduce((sum, value) => sum + Number(value.size || 0), 0);
+    }
+    if ((job.items || []).every(value => value.status === 'completed')) job.status = 'completed';
+  } catch (err) {
+    item.status = 'failed';
+    item.error = err?.message || 'consolidation failed';
+    job.status = 'failed';
+    job.error = item.error;
+  }
+  job.updatedAt = new Date().toISOString();
+  await saveStorageJobs(env, jobs);
+  return job;
+}
+
 function manifestPartsSize(manifest) {
   return (manifest?.parts || []).reduce((sum, part) => sum + Math.max(0, Number(part.size) || 0), 0);
 }
@@ -7507,6 +7662,44 @@ export default {
           mirror: { write: false, recovery: false }
         }
       });
+    }
+
+    if (path === '/api/storage-jobs' && request.method === 'GET') {
+      return jsonResponse({ ok: true, jobs: (await getStorageJobs(env)).map(publicStorageJob) });
+    }
+
+    if (path === '/api/storage-nodes/consolidate' && request.method === 'POST') {
+      try {
+        const id = url.searchParams.get('id') || '';
+        const job = await createConsolidationJob(env, R2, id);
+        return jsonResponse({ ok: true, job: publicStorageJob(job) }, 202);
+      } catch (err) {
+        return jsonResponse({ ok: false, error: err?.message || 'could not create consolidation job' }, 409);
+      }
+    }
+
+    const runJobMatch = /^\/api\/storage-jobs\/([^/]+)\/run$/.exec(path);
+    if (runJobMatch && request.method === 'POST') {
+      try {
+        const job = await runConsolidationJob(env, R2, runJobMatch[1]);
+        return jsonResponse({ ok: true, job: publicStorageJob(job) });
+      } catch (err) {
+        return jsonResponse({ ok: false, error: err?.message || 'could not run storage job' }, 409);
+      }
+    }
+
+    const controlJobMatch = /^\/api\/storage-jobs\/([^/]+)\/(pause|resume|cancel)$/.exec(path);
+    if (controlJobMatch && request.method === 'POST') {
+      const jobs = await getStorageJobs(env);
+      const job = jobs.find(item => item.id === controlJobMatch[1]);
+      if (!job) return jsonResponse({ ok: false, error: 'storage job not found' }, 404);
+      const action = controlJobMatch[2];
+      if (action === 'pause' && ['queued', 'copying', 'failed'].includes(job.status)) job.status = 'paused';
+      if (action === 'resume' && ['paused', 'failed'].includes(job.status)) { job.status = 'queued'; job.error = ''; }
+      if (action === 'cancel' && ['queued', 'paused', 'failed'].includes(job.status)) job.status = 'cancelled';
+      job.updatedAt = new Date().toISOString();
+      await saveStorageJobs(env, jobs);
+      return jsonResponse({ ok: true, job: publicStorageJob(job) });
     }
 
     if (path === '/api/shares/refresh' && request.method === 'POST') {

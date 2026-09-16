@@ -108,9 +108,14 @@
 | `POST /api/storage-nodes` | 兼容旧接口；`{id?,name,url,token,enabled?,weight?}`。仅在已配置 `NODE_CREDENTIAL_KEK` 时可用。 |
 | `POST /api/storage-nodes/rotate?id=<id>` | 轮换 A↔B 的独立连接凭据；不返回或查询旧凭据。旧凭据仅保留 10 分钟，以防控制端落库失败造成断连。 |
 | `POST /api/storage-nodes/drain?id=<id>` | 停止向节点分配新分片，标记为 `draining`。 |
+| `POST /api/storage-nodes/consolidate?id=<id>` | 为已排空节点创建归集作业；返回作业 ID，作业逐分片迁移到主控 R2。 |
 | `DELETE /api/storage-nodes?id=<id>` | 仅在没有 manifest 分片引用时删除节点配置。 |
 | `POST /api/storage-nodes/test?id=<id>` | 检查 ping 与容量接口。 |
 | `GET /api/storage-nodes/r2-files?id=main&cursor=&limit=100` | 查看主控或指定节点对象；`limit` 范围 1–200。 |
+| `GET /api/storage-policy` | 返回当前存储策略及已实现能力；当前 Mirror 能力明确为不可用。 |
+| `GET /api/storage-jobs` | 列出持久化存储作业及其进度。 |
+| `POST /api/storage-jobs/<id>/run` | 执行一个归集分片；复制、分段 SHA-256 校验、切换 manifest 并清理源分片。 |
+| `POST /api/storage-jobs/<id>/pause\|resume\|cancel` | 暂停、继续或取消尚未完成的归集作业；取消不会删除源分片。 |
 
 ### 节点 Worker 接口
 
