@@ -6622,6 +6622,7 @@ async function runStorageJob(env, R2, jobId) {
   if (job.type === 'consolidate-node') return runConsolidationJob(env, R2, jobId);
   if (job.type === 'upgrade-manifest-v1') return runManifestUpgradeJob(env, R2, jobId);
   if (job.type === 'convert-stripe-to-mirror') return runMirrorConversionJob(env, R2, jobId);
+  if (job.type === 'mirror-scrub') return runMirrorScrubJob(env, R2, jobId);
   throw new Error('unsupported storage job');
 }
 
@@ -6706,6 +6707,48 @@ async function runMirrorConversionJob(env, R2, jobId) {
       await saveAppConfig(env, config);
     }
   } catch (err) { item.status = 'failed'; item.error = err?.message || 'mirror conversion failed'; job.status = 'failed'; job.error = item.error; }
+  job.updatedAt = new Date().toISOString(); await saveStorageJobs(env, jobs); return job;
+}
+
+async function createMirrorScrubJob(env, R2) {
+  const items = []; let cursor;
+  do {
+    const listed = await R2.list({ cursor, limit: 1000, include: ['customMetadata'] });
+    for (const object of listed.objects || []) {
+      if (!hasManifestMetadata(object)) continue;
+      const manifest = await readManifestObject(await R2.get(object.key));
+      if (isManifestFile(manifest) && manifest.mode === 'mirror') items.push({ manifestKey: object.key, status: 'pending', error: '' });
+    }
+    cursor = listed.cursor;
+  } while (cursor);
+  const now = new Date().toISOString();
+  const job = { id: crypto.randomUUID(), type: 'mirror-scrub', nodeId: '', status: items.length ? 'queued' : 'completed', items, totalBytes: 0, completedBytes: 0, createdAt: now, updatedAt: now, error: '' };
+  const jobs = await getStorageJobs(env); jobs.push(job); await saveStorageJobs(env, jobs); return job;
+}
+
+async function runMirrorScrubJob(env, R2, jobId) {
+  const jobs = await getStorageJobs(env); const job = jobs.find(item => item.id === jobId && item.type === 'mirror-scrub');
+  if (!job) throw new Error('storage job not found'); if (['completed', 'paused', 'cancelled'].includes(job.status)) return job;
+  const item = job.items.find(value => value.status === 'pending' || value.status === 'failed');
+  if (!item) { job.status = 'completed'; await saveStorageJobs(env, jobs); return job; }
+  try {
+    const manifest = await readManifestObject(await R2.get(item.manifestKey));
+    if (!isManifestFile(manifest)) throw new Error('manifest no longer exists');
+    const nodes = new Map((await getStorageNodes(env, true)).map(node => [node.id, node]));
+    for (const part of manifest.parts) {
+      if (manifestPartReplicas(part).length !== 2 || !part.hash) throw new Error('replica layout is incomplete');
+      for (const replica of manifestPartReplicas(part)) {
+        const nodeId = replica.storageId || replica.nodeId;
+        const resolved = nodeId === MAIN_STORAGE_NODE_ID ? { ...replica, storageType: 'r2', nodeId } : { ...replica, storageType: 'node', nodeId, nodeUrl: replica.nodeUrl || nodes.get(nodeId)?.url, token: nodes.get(nodeId)?.token, size: part.size };
+        if (!constantTimeEqual(await manifestPartTreeHash(env, R2, resolved), part.hash)) throw new Error('replica checksum mismatch');
+      }
+    }
+    item.status = 'completed'; item.error = '';
+    if (job.items.every(value => value.status === 'completed')) job.status = 'completed';
+  } catch (err) {
+    item.status = 'failed'; item.error = err?.message || 'scrub failed'; job.status = 'failed'; job.error = item.error;
+    const config = await getAppConfig(env); config.storagePolicy = { ...normalizeStoragePolicy(config.storagePolicy), status: 'degraded', updatedAt: new Date().toISOString() }; await saveAppConfig(env, config);
+  }
   job.updatedAt = new Date().toISOString(); await saveStorageJobs(env, jobs); return job;
 }
 
@@ -8006,6 +8049,11 @@ export default {
       } catch (err) {
         return jsonResponse({ ok: false, error: err?.message || 'could not create Mirror conversion job' }, 409);
       }
+    }
+
+    if (path === '/api/mirror/scrub' && request.method === 'POST') {
+      try { return jsonResponse({ ok: true, job: publicStorageJob(await createMirrorScrubJob(env, R2)) }, 202); }
+      catch (err) { return jsonResponse({ ok: false, error: err?.message || 'could not create scrub job' }, 409); }
     }
 
     const runJobMatch = /^\/api\/storage-jobs\/([^/]+)\/run$/.exec(path);
