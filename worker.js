@@ -308,7 +308,7 @@ function renderHTML(content, title = 'CF-drive') {
     font-weight: 700;
   }
   .sidebar-item.active .material-icons-round { color: var(--primary); }
-  .sidebar-item .material-icons-round { font-size: 20px; }
+  .sidebar-item .material-icons-round { flex: 0 0 20px; width: 20px; font-size: 20px; text-align: center; }
   .sidebar-divider { height: 1px; background: var(--outline); margin: 8px 16px; }
 
   /* ── Main Content ── */
@@ -344,7 +344,7 @@ function renderHTML(content, title = 'CF-drive') {
     display: inline-flex; align-items: center; gap: 8px;
     background: var(--primary); color: white;
     border: none; border-radius: var(--radius-xl);
-    padding: 0 24px; height: 48px; cursor: pointer;
+    padding: 0 20px; height: 40px; cursor: pointer;
     font-family: var(--font-display); font-size: 14px; font-weight: 500;
     box-shadow: var(--shadow-2); transition: box-shadow .2s, background .2s;
     letter-spacing: .25px;
@@ -406,10 +406,12 @@ function renderHTML(content, title = 'CF-drive') {
   }
   .file-card:hover .file-card-actions { opacity: 1; }
   .file-card-primary-actions { display: flex; gap: 6px; margin-top: auto; }
-  .file-card-primary-actions .btn-outlined { flex: 1; min-width: 0; height: 32px; padding: 0 8px; font-size: 12px; }
+  .file-card-primary-actions .btn-outlined { flex: 1; min-width: 0; height: 40px; padding: 0 8px; font-size: 12px; }
   .share-status { display: inline-flex; align-items: center; gap: 4px; width: fit-content; padding: 2px 7px; border-radius: 999px; font-size: 11px; color: var(--on-surface-variant); background: rgba(95,99,104,.10); }
   .file-card.is-shared .share-status, .file-list tr.is-shared .share-status { color: var(--success); background: rgba(30,142,62,.12); }
   .file-card.is-shared .share-action, .file-list tr.is-shared .share-action { color: var(--success); border-color: var(--success); }
+  .file-card.is-inherited-share .share-status, .file-list tr.is-inherited-share .share-status { color: var(--primary); background: var(--primary-light); }
+  .file-card.is-inherited-share .share-action, .file-list tr.is-inherited-share .share-action { color: var(--primary); border-color: var(--primary); }
 
   /* ── File List (Table) ── */
   .file-list { width: 100%; border-collapse: collapse; }
@@ -433,7 +435,7 @@ function renderHTML(content, title = 'CF-drive') {
   .file-row-name:hover { color: var(--primary); text-decoration: underline; }
   .file-row-meta { font-size: 13px; color: var(--on-surface-variant); white-space: nowrap; }
   .file-row-actions { display: flex; gap: 4px; }
-  .file-row-actions .btn-outlined { height: 32px; padding: 0 8px; font-size: 12px; white-space: nowrap; }
+  .file-row-actions .btn-outlined { height: 40px; padding: 0 8px; font-size: 12px; white-space: nowrap; }
   .file-row-name-wrap { min-width: 0; display: flex; align-items: center; gap: 8px; }
 
   /* ── Empty State ── */
@@ -480,12 +482,6 @@ function renderHTML(content, title = 'CF-drive') {
     border: 1px solid var(--outline); border-radius: var(--radius-m);
     background: rgba(60,64,67,.04);
   }
-  #shareModal .modal { max-width: 720px; max-height: calc(100dvh - 48px); display: flex; flex-direction: column; }
-  #shareModal .modal-body { overflow-y: auto; min-height: 0; }
-  #shareModal .modal-header, #shareModal .modal-footer { flex-shrink: 0; }
-  #shareModal .share-records { max-height: none; overflow: visible; }
-  #shareModal .share-record-meta { overflow-wrap: anywhere; }
-  #shareModal .modal-footer { flex-wrap: wrap; }
   .share-summary .material-icons-round { color: var(--primary); }
   .share-summary-main { min-width: 0; flex: 1; }
   .share-summary-label { font-size: 12px; color: var(--on-surface-variant); margin-bottom: 2px; }
@@ -518,7 +514,7 @@ function renderHTML(content, title = 'CF-drive') {
   }
   .share-record-meta { font-size: 12px; color: var(--on-surface-variant); line-height: 1.5; }
   .share-record-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-  .share-record-actions .btn-outlined { height: 32px; padding: 0 10px; font-size: 12px; }
+  .share-record-actions .btn-outlined { height: 40px; padding: 0 10px; font-size: 12px; }
   .share-record-empty {
     padding: 14px; border: 1px dashed var(--outline); border-radius: var(--radius-m);
     color: var(--on-surface-variant); font-size: 13px; text-align: center;
@@ -714,21 +710,23 @@ function renderHTML(content, title = 'CF-drive') {
   /* ── View Toggle ── */
   .view-toggle { display: flex; border: 1px solid var(--outline); border-radius: var(--radius-m); overflow: hidden; }
   .view-toggle-btn {
-    width: 40px; height: 36px; border: none; background: transparent;
+    width: 40px; height: 40px; border: none; background: transparent;
     display: flex; align-items: center; justify-content: center;
     cursor: pointer; color: var(--on-surface-variant); transition: background .15s;
   }
   .view-toggle-btn:hover { background: rgba(60,64,67,.08); }
   .view-toggle-btn.active { background: var(--primary-light); color: var(--primary); }
   .view-toggle-btn .material-icons-round { font-size: 20px; }
-  .top-action { height: 36px; padding: 0 12px; font-size: 13px; }
+  .top-action { height: 40px; padding: 0 12px; font-size: 13px; }
   .selection-mode-active { color: var(--primary); border-color: var(--primary); background: var(--primary-light); }
   .share-page { max-width: 1100px; margin: 0 auto; }
   .share-page-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
   .share-page-layout { display: grid; grid-template-columns: minmax(300px, .9fr) minmax(0, 1.4fr); gap: 20px; }
   .share-page-panel { border: 1px solid var(--outline); border-radius: var(--radius-m); background: var(--surface); padding: 20px; }
   .share-page-panel .share-records { margin-top: 0; border-top: none; padding-top: 0; max-height: none; }
-  @media (max-width: 800px) { .share-page-layout { grid-template-columns: 1fr; } .top-action-label { display: none; } .top-action { width: 36px; padding: 0; justify-content: center; } }
+  #shareWorkspace[hidden], #driveWorkspace[hidden] { display: none; }
+  .share-workspace-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 18px; }
+  @media (max-width: 800px) { .share-page-layout { grid-template-columns: 1fr; } .top-action-label { display: none; } .top-action { width: 40px; padding: 0; justify-content: center; } }
 
   /* ── Responsive ── */
   @media (max-width: 768px) {
@@ -808,6 +806,7 @@ function renderHTML(content, title = 'CF-drive') {
     background: var(--outline); margin: 0 4px;
   }
   .action-btn {
+    height: 40px;
     display: inline-flex; align-items: center; gap: 4px;
     padding: 6px 12px;
     border: none; background: transparent;
@@ -983,6 +982,8 @@ ${content}
 
 <footer class="foot-bar">
   <span>CF-drive</span>
+  <span class="foot-bar-sep">|</span>
+  <a href="https://github.com/vimbackground/CF-drive" target="_blank" rel="noopener noreferrer">项目 GitHub</a>
   <span class="foot-bar-sep">|</span>
   <span>用户存储之内容需符合当地法律法规，本程序不承担法律责任。</span>
 </footer>
@@ -1420,6 +1421,11 @@ function handleFolderClick(event, name, href) {
   }
   location.href = href;
 }
+function goToParentDirectory() {
+  const parent = currentPath.split('/').filter(Boolean).slice(0, -1).join('/');
+  location.href = parent ? '/?path=' + encodeURIComponent(parent) : '/';
+}
+function goToRootDirectory() { location.href = '/'; }
 
 function toggleSelect(name, el) {
   if (selectedFiles.has(name)) { selectedFiles.delete(name); el?.classList.remove('selected'); }
@@ -1476,6 +1482,9 @@ function applyDarkMode(isDark) {
   localStorage.setItem('theme', isDark ? 'dark' : '');
   document.querySelectorAll('#darkModeToggle .material-icons-round').forEach(icon => {
     setLocalIconGlyph(icon, isDark ? 'light_mode' : 'dark_mode');
+  });
+  document.querySelectorAll('#darkModeToggle .top-action-label').forEach(label => {
+    label.textContent = isDark ? '亮' : '暗';
   });
 }
 
@@ -1981,6 +1990,19 @@ function copyDirectLink(path) {
   navigator.clipboard.writeText(url).then(() => showSnackbar('链接已复制')).catch(() => window.prompt('请手动复制链接', url));
 }
 let driveSharesByPath = new Map();
+function shareForPath(path) {
+  const exact = driveSharesByPath.get(path) || [];
+  if (exact.length) return { share: exact.find(item => !item.inactiveReason) || exact[0], sharePath: path, inheritedFrom: '' };
+  const parts = String(path || '').split('/').filter(Boolean);
+  while (parts.length > 1) {
+    parts.pop();
+    const parentPath = parts.join('/');
+    const parentShares = driveSharesByPath.get(parentPath) || [];
+    const active = parentShares.find(item => !item.inactiveReason);
+    if (active) return { share: active, sharePath: parentPath, inheritedFrom: parentPath };
+  }
+  return null;
+}
 async function loadDriveShareStatus() {
   const targets = [...document.querySelectorAll('[data-share-path]')];
   if (!targets.length) return;
@@ -1995,28 +2017,32 @@ async function loadDriveShareStatus() {
       driveSharesByPath.set(share.path, list);
     });
     targets.forEach(target => {
-      const shares = driveSharesByPath.get(target.dataset.sharePath) || [];
-      const share = shares.find(item => !item.inactiveReason) || shares[0];
+      const matched = shareForPath(target.dataset.sharePath);
+      const share = matched?.share;
       const shared = !!share;
+      const inherited = !!matched?.inheritedFrom;
       target.classList.toggle('is-shared', shared);
+      target.classList.toggle('is-inherited-share', inherited);
       const status = target.querySelector('[data-share-status]');
-      if (status) status.textContent = shared ? (share.inactiveReason ? '分享已失效' : '已分享') : '未分享';
+      if (status) status.textContent = !shared ? '未分享' : inherited ? '上级目录已分享' : share.inactiveReason ? '分享已失效' : '已分享';
       const action = target.querySelector('[data-share-action]');
       if (action) {
-        action.title = shared ? '管理分享' : '创建分享';
-        action.innerHTML = '<span class="material-icons-round">ios_share</span> ' + (shared ? '管理分享' : '创建分享');
+        action.title = !shared ? '创建分享' : inherited ? '查看上级分享' : '管理分享';
+        action.innerHTML = '<span class="material-icons-round">ios_share</span> ' + (!shared ? '创建分享' : inherited ? '查看上级分享' : '管理分享');
+        action.onclick = event => { event.preventDefault(); event.stopPropagation(); createShareForPath(shared ? matched.sharePath : target.dataset.sharePath); };
       }
       const copy = target.querySelector('[data-share-copy]');
       if (copy) {
-        copy.title = shared ? '复制分享链接' : '复制直链';
-        copy.innerHTML = '<span class="material-icons-round">link</span> ' + (shared ? '复制分享链接' : '复制直链');
+        copy.title = shared && !share.inactiveReason ? (inherited ? '复制上级分享链接' : '复制分享链接') : '复制直链';
+        copy.innerHTML = '<span class="material-icons-round">link</span> ' + (shared && !share.inactiveReason ? (inherited ? '复制上级分享链接' : '复制分享链接') : '复制直链');
+        copy.onclick = event => { event.preventDefault(); event.stopPropagation(); copyShareOrDirectLink(target.dataset.sharePath); };
       }
     });
   } catch (err) { console.warn('load share status failed:', err?.message || err); }
 }
 function copyShareOrDirectLink(path) {
-  const shares = driveSharesByPath.get(path) || [];
-  const share = shares.find(item => !item.inactiveReason) || null;
+  const matched = shareForPath(path);
+  const share = matched?.share && !matched.share.inactiveReason ? matched.share : null;
   if (share) return navigator.clipboard.writeText(shareAbsoluteUrl(share)).then(() => showSnackbar('分享链接已复制')).catch(() => window.prompt('请手动复制分享链接', shareAbsoluteUrl(share)));
   copyDirectLink(path);
 }
@@ -2026,20 +2052,32 @@ let shareEditId = '';
 let shareRecordsCache = [];
 let shareManagerMode = false;
 let shareLoadSequence = 0;
+function showShareWorkspace() {
+  document.getElementById('driveWorkspace')?.setAttribute('hidden', '');
+  document.getElementById('shareWorkspace')?.removeAttribute('hidden');
+  document.getElementById('fileManagementNav')?.classList.remove('active');
+  document.getElementById('shareManagementNav')?.classList.add('active');
+}
+function showDriveWorkspace() {
+  document.getElementById('shareWorkspace')?.setAttribute('hidden', '');
+  document.getElementById('driveWorkspace')?.removeAttribute('hidden');
+  document.getElementById('shareManagementNav')?.classList.remove('active');
+  document.getElementById('fileManagementNav')?.classList.add('active');
+  loadDriveShareStatus();
+}
 function openShareManager() {
-  location.href = '/shares';
+  showShareWorkspace();
+  openShareModal('');
 }
 function openShareModal(path) {
+  showShareWorkspace();
   shareManagerMode = !path;
   shareTargetPathValue = path || '';
   createdShareLink = '';
   shareEditId = '';
   shareRecordsCache = [];
-  const modal = document.getElementById('shareModal');
   const target = document.getElementById('shareTargetPath');
   const password = document.getElementById('sharePasswordInput');
-  const days = document.getElementById('shareDaysInput');
-  const maxAccess = document.getElementById('shareMaxAccessInput');
   const result = document.getElementById('shareResult');
   const linkInput = document.getElementById('shareLinkInput');
   if (target) target.textContent = path || '全部文件和目录的分享';
@@ -2048,15 +2086,13 @@ function openShareModal(path) {
   document.getElementById('shareSearchInput').style.display = shareManagerMode ? '' : 'none';
   if (result) result.classList.remove('open');
   if (linkInput) linkInput.value = '';
-  modal?.classList.add('open');
   resetShareForm();
   loadSharesForTarget(path);
   setTimeout(() => password?.focus(), 100);
 }
 function closeShareModal() {
   shareLoadSequence++;
-  if (document.getElementById('shareWorkspace')) { location.href = '/'; return; }
-  document.getElementById('shareModal')?.classList.remove('open');
+  showDriveWorkspace();
 }
 function resetShareForm() {
   shareEditId = '';
@@ -2091,6 +2127,7 @@ function resetShareForm() {
   if (linkInput) linkInput.value = '';
   if (btn) {
     btn.disabled = false;
+    btn.onclick = submitShareForm;
     btn.innerHTML = '<span class="material-icons-round">ios_share</span> 创建分享';
   }
   if (newBtn) newBtn.style.display = 'none';
@@ -2118,6 +2155,7 @@ async function submitShareForm() {
     btn.disabled = true;
     btn.innerHTML = '<span class="material-icons-round">sync</span> ' + (shareEditId ? '保存中...' : '创建中...');
   }
+  let shareSubmissionComplete = false;
   try {
     const body = {
       path: shareTargetPathValue,
@@ -2151,13 +2189,22 @@ async function submitShareForm() {
       linkInput.select();
     }
     result?.classList.add('open');
+    document.getElementById('shareFormGrid').style.display = 'none';
+    const newBtn = document.getElementById('shareNewBtn');
+    if (newBtn) { newBtn.style.display = ''; newBtn.textContent = '新建分享'; }
+    if (btn && !shareSubmissionComplete) {
+      btn.disabled = false;
+      btn.onclick = closeShareModal;
+      btn.innerHTML = '<span class="material-icons-round">arrow_back</span> 返回文件管理';
+    }
+    shareSubmissionComplete = true;
     await navigator.clipboard.writeText(createdShareLink).catch(() => {});
     showSnackbar(shareEditId ? '分享设置已更新' : '分享链接已创建并复制');
-    await loadSharesForTarget(shareTargetPathValue, data.share.id);
+    await loadSharesForTarget(shareTargetPathValue);
   } catch (err) {
     showSnackbar((shareEditId ? '更新分享失败：' : '创建分享失败：') + (err.message || '未知错误'));
   } finally {
-    if (btn) {
+    if (btn && !shareSubmissionComplete) {
       btn.disabled = false;
       btn.innerHTML = shareEditId
         ? '<span class="material-icons-round">save</span> 保存修改'
@@ -2293,7 +2340,7 @@ function editShareRecord(id) {
   if (hint) hint.textContent = '编辑分享时，密码留空表示保持不变';
   if (linkInput) linkInput.value = createdShareLink;
   result?.classList.add('open');
-  if (btn) btn.innerHTML = '<span class="material-icons-round">save</span> 保存修改';
+  if (btn) { btn.onclick = submitShareForm; btn.innerHTML = '<span class="material-icons-round">save</span> 保存修改'; }
   if (newBtn) {
     newBtn.style.display = '';
     newBtn.textContent = shareManagerMode ? '返回全部分享' : '新建分享';
@@ -2340,7 +2387,7 @@ function selectedPathFromName(name) {
   return currentPath ? currentPath + '/' + name : name;
 }
 async function createShareForPath(path) {
-  location.href = '/shares?path=' + encodeURIComponent(path);
+  openShareModal(path);
 }
 function ctxShare() {
   if (!ctxTarget) return;
@@ -2947,8 +2994,7 @@ document.addEventListener('DOMContentLoaded', () => {
   checkClipboardFromStore();
   updateStorageInfo();
   updateActionBar();
-  if (document.getElementById('shareWorkspace')) openShareModal(currentPath);
-  else loadDriveShareStatus();
+  loadDriveShareStatus();
 });
 </script>
 </body>
@@ -2961,11 +3007,11 @@ function renderSetupPage(siteTitle = 'CF-drive') {
 
 function renderSettingsPage(settings, siteTitle = 'CF-drive') {
   const safe = JSON.stringify(settings).replace(/</g, '\\u003c');
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>设置 - ${escapeHtml(siteTitle)}</title><style>body{font-family:system-ui,sans-serif;max-width:680px;margin:5vh auto;padding:24px;background:#f6f8fa}main{background:#fff;padding:28px;border-radius:12px}label{display:block;margin:14px 0 6px}input{box-sizing:border-box;width:100%;padding:10px}button{margin:18px 8px 0 0;padding:10px 16px}small{color:#57606a}#status{white-space:pre-wrap}</style></head><body><main><h1>实例设置</h1><p><a href="/">返回网盘</a> · <a href="/guide">使用指南</a></p><label>站点标题<input id="siteTitle" maxlength="100"></label><label>WebDAV 用户名<input id="webdavUsername" autocomplete="username"></label><label>WebDAV 新密码 <small>留空保持不变；至少 8 位</small><input id="webdavPassword" type="password" minlength="8" autocomplete="new-password"></label><label><input id="webdavEnabled" type="checkbox" style="width:auto"> 启用 WebDAV</label><label>WebDAV 最大上传字节数<input id="maxUploadBytes" type="number" min="1"></label><label>新的管理员密码 <small>留空保持不变；至少 8 位</small><input id="adminPassword" type="password" minlength="8" autocomplete="new-password"></label><label><input id="rotateShareSecret" type="checkbox" style="width:auto"> 轮换分享签名密钥（会使现有分享授权 Cookie 失效）</label><button id="save">保存</button><p id="status" role="alert"></p></main><script>const initial=${safe};for(const [id,value] of Object.entries({siteTitle:initial.siteTitle,webdavUsername:initial.webdav.username,maxUploadBytes:initial.webdav.maxUploadBytes}))document.getElementById(id).value=value;document.getElementById('webdavEnabled').checked=initial.webdav.enabled;document.getElementById('save').onclick=async()=>{const status=document.getElementById('status');const body={siteTitle:document.getElementById('siteTitle').value,webdav:{enabled:document.getElementById('webdavEnabled').checked,username:document.getElementById('webdavUsername').value,maxUploadBytes:Number(document.getElementById('maxUploadBytes').value),password:document.getElementById('webdavPassword').value},adminPassword:document.getElementById('adminPassword').value,rotateShareSecret:document.getElementById('rotateShareSecret').checked};const r=await fetch('/api/settings',{method:'PUT',headers:{'Content-Type':'application/json','X-R2Drive-CSRF':'same-origin'},body:JSON.stringify(body)});const data=await r.json();status.textContent=data.ok?'已保存。':'保存失败：'+(data.error||r.status)};</script></body></html>`;
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>网盘设置 - ${escapeHtml(siteTitle)}</title><style>:root{color-scheme:light}*{box-sizing:border-box}body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;max-width:760px;margin:5vh auto;padding:24px;background:#f6f8fa;color:#1f2328}.utility-panel{background:#fff;padding:28px;border-radius:12px;box-shadow:0 2px 12px #0001;min-height:560px}.utility-nav{display:flex;gap:8px;flex-wrap:wrap;padding-bottom:20px;margin-bottom:24px;border-bottom:1px solid #d0d7de}.utility-nav a{padding:8px 12px;border-radius:8px;color:#1557b0;text-decoration:none;font-size:14px}.utility-nav a:hover,.utility-nav a.active{background:#e8f0fe;color:#0b57d0;font-weight:600}h1{margin:0 0 12px}label{display:block;margin:14px 0 6px}input{box-sizing:border-box;width:100%;padding:10px;border:1px solid #8c959f;border-radius:8px;font:inherit}button{margin:18px 8px 0 0;padding:10px 16px;border:0;border-radius:999px;background:#0b57d0;color:#fff;font:inherit;cursor:pointer}small{color:#57606a}#status{white-space:pre-wrap}.utility-footer{margin-top:28px;padding-top:18px;border-top:1px solid #d0d7de;color:#57606a;font-size:13px}.utility-footer a{color:#1557b0;text-decoration:none}@media(max-width:600px){body{margin:0;padding:12px}.utility-panel{padding:20px;min-height:calc(100vh - 24px)}}</style></head><body><main class="utility-panel"><nav class="utility-nav"><a href="/">返回文件管理</a><a class="active" href="/settings">网盘设置</a><a href="/guide">使用指南</a></nav><h1>网盘设置</h1><label>站点标题<input id="siteTitle" maxlength="100"></label><label>WebDAV 用户名<input id="webdavUsername" autocomplete="username"></label><label>WebDAV 新密码 <small>留空保持不变；至少 8 位</small><input id="webdavPassword" type="password" minlength="8" autocomplete="new-password"></label><label><input id="webdavEnabled" type="checkbox" style="width:auto"> 启用 WebDAV</label><label>WebDAV 最大上传字节数<input id="maxUploadBytes" type="number" min="1"></label><label>新的管理员密码 <small>留空保持不变；至少 8 位</small><input id="adminPassword" type="password" minlength="8" autocomplete="new-password"></label><label><input id="rotateShareSecret" type="checkbox" style="width:auto"> 轮换分享签名密钥（会使现有分享授权 Cookie 失效）</label><button id="save">保存设置</button><p id="status" role="alert"></p><div class="utility-footer"><a href="https://github.com/vimbackground/CF-drive" target="_blank" rel="noopener noreferrer">项目 GitHub</a></div></main><script>const initial=${safe};for(const [id,value] of Object.entries({siteTitle:initial.siteTitle,webdavUsername:initial.webdav.username,maxUploadBytes:initial.webdav.maxUploadBytes}))document.getElementById(id).value=value;document.getElementById('webdavEnabled').checked=initial.webdav.enabled;document.getElementById('save').onclick=async()=>{const status=document.getElementById('status');const body={siteTitle:document.getElementById('siteTitle').value,webdav:{enabled:document.getElementById('webdavEnabled').checked,username:document.getElementById('webdavUsername').value,maxUploadBytes:Number(document.getElementById('maxUploadBytes').value),password:document.getElementById('webdavPassword').value},adminPassword:document.getElementById('adminPassword').value,rotateShareSecret:document.getElementById('rotateShareSecret').checked};const r=await fetch('/api/settings',{method:'PUT',headers:{'Content-Type':'application/json','X-R2Drive-CSRF':'same-origin'},body:JSON.stringify(body)});const data=await r.json();status.textContent=data.ok?'设置已保存。':'保存失败：'+(data.error||r.status)};</script></body></html>`;
 }
 
 function renderGuidePage(siteTitle = 'CF-drive') {
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>使用指南 - ${escapeHtml(siteTitle)}</title><style>body{font-family:system-ui,sans-serif;max-width:760px;margin:5vh auto;padding:24px;background:#f6f8fa;color:#1f2328}main{background:#fff;padding:28px;border-radius:12px;line-height:1.65}h1{margin-top:0}h2{margin:28px 0 8px;font-size:20px}ol{padding-left:22px}code{padding:2px 5px;background:#f1f3f5;border-radius:4px}a{color:#1557b0}</style></head><body><main><h1>使用指南</h1><p><a href="/">返回网盘</a> · <a href="/settings">系统设置</a></p><h2>后台设置</h2><ol><li>在“系统设置”中可修改站点标题、管理员密码，以及 WebDAV 的独立账号和密码。</li><li>管理员与 WebDAV 密码均至少 8 位；WebDAV 密码请勿复用管理员密码。</li><li>启用 WebDAV 前，请填好用户名和密码；保存后才会生效。</li></ol><h2>WebDAV 使用</h2><ol><li>服务器地址：<code>https://你的域名/dav/</code>。</li><li>在 Windows 资源管理器、macOS Finder 或支持 WebDAV 的客户端中添加该地址，并使用系统设置中的 WebDAV 凭据登录。</li><li>如需上传较大文件，请按客户端能力调整“WebDAV 最大上传字节数”。</li></ol><p>分享链接可在“分享管理”中编辑、刷新或撤销；文件和目录行也可直接打开分享设置。</p></main></body></html>`;
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>使用指南 - ${escapeHtml(siteTitle)}</title><style>:root{color-scheme:light}*{box-sizing:border-box}body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;max-width:760px;margin:5vh auto;padding:24px;background:#f6f8fa;color:#1f2328}.utility-panel{background:#fff;padding:28px;border-radius:12px;box-shadow:0 2px 12px #0001;min-height:560px;line-height:1.65}.utility-nav{display:flex;gap:8px;flex-wrap:wrap;padding-bottom:20px;margin-bottom:24px;border-bottom:1px solid #d0d7de}.utility-nav a{padding:8px 12px;border-radius:8px;color:#1557b0;text-decoration:none;font-size:14px}.utility-nav a:hover,.utility-nav a.active{background:#e8f0fe;color:#0b57d0;font-weight:600}h1{margin:0}h2{margin:28px 0 8px;font-size:20px}ol{padding-left:22px}code{padding:2px 5px;background:#f1f3f5;border-radius:4px}.utility-footer{margin-top:28px;padding-top:18px;border-top:1px solid #d0d7de;color:#57606a;font-size:13px}.utility-footer a{color:#1557b0;text-decoration:none}@media(max-width:600px){body{margin:0;padding:12px}.utility-panel{padding:20px;min-height:calc(100vh - 24px)}}</style></head><body><main class="utility-panel"><nav class="utility-nav"><a href="/">返回文件管理</a><a href="/settings">网盘设置</a><a class="active" href="/guide">使用指南</a></nav><h1>使用指南</h1><h2>网盘设置</h2><ol><li>在“网盘设置”中可修改站点标题、管理员密码，以及 WebDAV 的独立账号和密码。</li><li>管理员与 WebDAV 密码均至少 8 位；WebDAV 密码请勿复用管理员密码。</li><li>启用 WebDAV 前，请填好用户名和密码；保存后才会生效。</li></ol><h2>WebDAV 使用</h2><ol><li>服务器地址：<code>https://你的域名/dav/</code>。</li><li>在 Windows 资源管理器、macOS Finder 或支持 WebDAV 的客户端中添加该地址，并使用网盘设置中的 WebDAV 凭据登录。</li><li>如需上传较大文件，请按客户端能力调整“WebDAV 最大上传字节数”。</li></ol><p>分享链接可在“分享管理”中编辑、刷新或撤销；文件和目录行也可直接打开分享设置。</p><div class="utility-footer"><a href="https://github.com/vimbackground/CF-drive" target="_blank" rel="noopener noreferrer">项目 GitHub</a></div></main></body></html>`;
 }
 function renderLoginPage(error = '', siteTitle = 'CF-drive', cloudIconUrl = '', loginBackgroundUrl = '') {
   const bgUrl = String(loginBackgroundUrl || '').trim();
@@ -3274,19 +3320,8 @@ function renderConditionalSharePage(share, options = {}, siteTitle, cloudIconUrl
 `, siteTitle + ' - 分享目录');
 }
 
-function renderShareManagerPage(siteTitle, cloudIconUrl = '') {
-  return renderHTML(`
-<header class="app-bar">
-  <a class="app-bar-logo" href="/">${renderLogoIcon(cloudIconUrl)}<span class="app-bar-title">${escapeHtml(siteTitle)}</span></a>
-  <div class="app-bar-spacer"></div>
-  <div class="app-bar-actions">
-    <a class="btn-outlined top-action" href="/"><span class="material-icons-round">arrow_back</span><span class="top-action-label">文件管理</span></a>
-    <button class="btn-outlined top-action" id="darkModeToggle" onclick="toggleDarkMode(event)"><span class="material-icons-round">dark_mode</span><span class="top-action-label">主题</span></button>
-    <button class="btn-outlined top-action" onclick="logout()"><span class="material-icons-round">logout</span><span class="top-action-label">退出</span></button>
-  </div>
-</header>
-<main class="main" id="shareWorkspace">
-  <div class="share-page">
+function renderInlineShareWorkspace() {
+  return `<section class="share-page" id="shareWorkspace" hidden>
     <div class="share-page-head"><div><h1 class="modal-title" id="shareModalTitle">分享管理</h1><p class="share-hint">集中查看、编辑、刷新或取消所有分享链接。</p></div></div>
     <div class="share-page-layout">
       <section class="share-page-panel">
@@ -3297,16 +3332,15 @@ function renderShareManagerPage(siteTitle, cloudIconUrl = '') {
           <div><label class="field-label" for="shareDaysInput">有效天数</label><input class="text-field" id="shareDaysInput" type="number" min="0" step="1" placeholder="0"><div class="share-hint">0 或留空表示长期有效</div></div>
           <div><label class="field-label" for="shareMaxAccessInput">访问次数</label><input class="text-field" id="shareMaxAccessInput" type="number" min="0" step="1" placeholder="0"><div class="share-hint">0 或留空表示不限次数</div></div>
         </div>
-        <div class="share-result" id="shareResult"><div class="share-hint">分享链接已创建</div><div class="share-link-row"><input class="text-field" id="shareLinkInput" type="text" readonly><button class="btn-outlined" onclick="copyCreatedShareLink()"><span class="material-icons-round">content_copy</span> 复制</button></div></div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:18px"><button class="btn-outlined" id="shareNewBtn" onclick="resetShareForm()" style="display:none">新建分享</button><button class="btn-outlined" onclick="closeShareModal()">返回文件管理</button><button class="fab" style="box-shadow:none" id="shareCreateBtn" onclick="submitShareForm()"><span class="material-icons-round">ios_share</span> 创建分享</button></div>
+        <div class="share-result" id="shareResult"><div class="share-hint">分享设置已完成，链接已复制。</div><div class="share-link-row"><input class="text-field" id="shareLinkInput" type="text" readonly><button class="btn-outlined" onclick="copyCreatedShareLink()"><span class="material-icons-round">content_copy</span> 复制链接</button></div></div>
+        <div class="share-workspace-actions"><button class="btn-outlined" id="shareNewBtn" onclick="resetShareForm()" style="display:none">新建分享</button><button class="btn-outlined" onclick="closeShareModal()"><span class="material-icons-round">arrow_back</span> 返回文件管理</button><button class="fab" id="shareCreateBtn" onclick="submitShareForm()"><span class="material-icons-round">ios_share</span> 创建分享</button></div>
       </section>
       <section class="share-page-panel">
         <input class="text-field" id="shareSearchInput" type="search" placeholder="搜索分享路径或后缀" aria-label="搜索分享" style="margin-bottom:14px" oninput="renderShareRecords(shareRecordsCache)">
         <div class="share-records" id="shareRecords"><div class="share-record-empty">正在加载分享记录...</div></div>
       </section>
     </div>
-  </div>
-</main>`, siteTitle + ' - 分享管理');
+  </section>`;
 }
 function renderDrivePage(folders, files, currentPath, siteTitle, cloudIconUrl = '') {
   const pathParts = currentPath ? currentPath.split('/').filter(Boolean) : [];
@@ -3432,8 +3466,8 @@ function renderDrivePage(folders, files, currentPath, siteTitle, cloudIconUrl = 
   <div class="app-bar-spacer"></div>
     <div class="app-bar-actions">
     <button class="btn-outlined top-action" onclick="openUpload()"><span class="material-icons-round">upload</span><span class="top-action-label">上传</span></button>
-    <button class="btn-outlined top-action" onclick="location.href='/shares'"><span class="material-icons-round">ios_share</span><span class="top-action-label">分享</span></button>
-    <button class="btn-outlined top-action" id="darkModeToggle" title="切换深色或浅色主题" onclick="toggleDarkMode(event)"><span class="material-icons-round">dark_mode</span><span class="top-action-label">主题</span></button>
+    <button class="btn-outlined top-action" onclick="openShareManager()"><span class="material-icons-round">ios_share</span><span class="top-action-label">分享管理</span></button>
+    <button class="btn-outlined top-action" id="darkModeToggle" title="切换亮色或暗色主题" onclick="toggleDarkMode(event)"><span class="material-icons-round">dark_mode</span><span class="top-action-label">暗</span></button>
     <button class="btn-outlined top-action" title="刷新文件列表" onclick="location.reload()"><span class="material-icons-round">refresh</span><span class="top-action-label">刷新</span></button>
     <button class="btn-outlined top-action" title="退出登录" onclick="logout()"><span class="material-icons-round">logout</span><span class="top-action-label">退出</span></button>
   </div>
@@ -3442,10 +3476,10 @@ function renderDrivePage(folders, files, currentPath, siteTitle, cloudIconUrl = 
 <div class="layout">
   <nav class="sidebar">
         <div class="sidebar-section">
-      <a class="sidebar-item active" href="/">
+      <a class="sidebar-item active" id="fileManagementNav" href="/">
         <span class="material-icons-round">cloud</span> 文件管理
       </a>
-      <button class="sidebar-item" onclick="openShareManager()">
+      <button class="sidebar-item" id="shareManagementNav" onclick="openShareManager()">
         <span class="material-icons-round">ios_share</span> 分享管理
       </button>
       <button class="sidebar-item" onclick="openUpload()">
@@ -3456,7 +3490,7 @@ function renderDrivePage(folders, files, currentPath, siteTitle, cloudIconUrl = 
     <div class="sidebar-section">
       <div class="sidebar-label">设置</div>
       <a class="sidebar-item" href="/settings">
-        <span class="material-icons-round">settings</span> 系统设置
+        <span class="material-icons-round">settings</span> 网盘设置
       </a>
 
       <a class="sidebar-item" href="/guide">
@@ -3465,7 +3499,7 @@ function renderDrivePage(folders, files, currentPath, siteTitle, cloudIconUrl = 
     </div>
     <div class="sidebar-bottom">
       <button class="sidebar-item storage-node-shortcut" onclick="openStorageNodes()">
-        <span class="material-icons-round">hub</span> 存储节点
+        <span class="material-icons-round">hub</span> 存储节点管理
       </button>
       <button class="storage-info" id="storageInfo" onclick="toggleStorageDetails()" title="查看容量明细">
         <div class="storage-text">
@@ -3481,11 +3515,18 @@ function renderDrivePage(folders, files, currentPath, siteTitle, cloudIconUrl = 
   </nav>
 
   <main class="main">
+    <section id="driveWorkspace">
     ${breadcrumb}
 
     <div class="toolbar">
       <button class="fab" onclick="openUpload()">
         <span class="material-icons-round">upload</span> 上传
+      </button>
+      <button class="btn-outlined" onclick="goToParentDirectory()" ${currentPath ? '' : 'disabled'}>
+        <span class="material-icons-round">arrow_back</span> 返回上一级
+      </button>
+      <button class="btn-outlined" onclick="goToRootDirectory()">
+        <span class="material-icons-round">cloud</span> 根目录
       </button>
       <button class="btn-outlined" onclick="openNewFolder()">
         <span class="material-icons-round">create_new_folder</span> 新建文件夹
@@ -3579,6 +3620,8 @@ function renderDrivePage(folders, files, currentPath, siteTitle, cloudIconUrl = 
       </table>
     </div>
     `}
+    </section>
+    ${renderInlineShareWorkspace()}
   </main>
 </div>
 
@@ -3636,70 +3679,6 @@ function renderDrivePage(folders, files, currentPath, siteTitle, cloudIconUrl = 
       <button class="btn-outlined" onclick="closeNewFolder()">取消</button>
       <button class="fab" style="box-shadow:none" onclick="createFolder()">
         <span class="material-icons-round">check</span> 创建
-      </button>
-    </div>
-  </div>
-</div>
-
-<!-- Share Modal -->
-<div class="modal-overlay" id="shareModal" onclick="if(event.target===this)closeShareModal()">
-  <div class="modal">
-    <div class="modal-header">
-      <span class="material-icons-round" style="color:var(--primary)">ios_share</span>
-      <span class="modal-title" id="shareModalTitle">分享设置</span>
-    </div>
-    <div class="modal-body">
-      <div class="share-summary">
-        <span class="material-icons-round">insert_drive_file</span>
-        <div class="share-summary-main">
-          <div class="share-summary-label">分享对象</div>
-          <div class="share-summary-path" id="shareTargetPath"></div>
-        </div>
-      </div>
-      <input class="text-field" id="shareSearchInput" type="search" placeholder="搜索分享路径或后缀" aria-label="搜索分享" style="display:none;margin-bottom:14px" oninput="renderShareRecords(shareRecordsCache)">
-      <div class="share-form-grid" id="shareFormGrid">
-        <div class="full">
-          <label class="field-label" for="shareSuffixInput">分享链接后缀 /s/</label>
-          <input class="text-field" id="shareSuffixInput" type="text" maxlength="64" placeholder="例如 my-file，留空自动生成" autocomplete="off" spellcheck="false">
-          <div class="share-hint">1–64 位字母、数字、下划线或短横线，以字母或数字开头，统一转为小写。修改后旧分享链接和直链失效；刷新链接会生成随机后缀。</div>
-        </div>
-        <div class="full">
-          <label class="field-label" for="sharePasswordInput">访问密码</label>
-          <input class="text-field" id="sharePasswordInput" type="password" placeholder="留空表示无需密码">
-          <div class="share-hint" id="sharePasswordHint">创建新分享时留空表示无需密码</div>
-          <label class="share-hint" id="shareClearPasswordLabel" style="display:none;align-items:center;gap:6px">
-            <input type="checkbox" id="shareClearPasswordInput"> 移除当前密码
-          </label>
-        </div>
-        <div>
-          <label class="field-label" for="shareDaysInput">有效天数</label>
-          <input class="text-field" id="shareDaysInput" type="number" min="0" step="1" placeholder="0">
-          <div class="share-hint">0 或留空表示长期有效</div>
-        </div>
-        <div>
-          <label class="field-label" for="shareMaxAccessInput">访问次数</label>
-          <input class="text-field" id="shareMaxAccessInput" type="number" min="0" step="1" placeholder="0">
-          <div class="share-hint">0 或留空表示不限次数</div>
-        </div>
-      </div>
-      <div class="share-result" id="shareResult">
-        <div class="share-hint">分享链接已创建</div>
-        <div class="share-link-row">
-          <input class="text-field" id="shareLinkInput" type="text" readonly>
-          <button class="btn-outlined" onclick="copyCreatedShareLink()">
-            <span class="material-icons-round">content_copy</span> 复制
-          </button>
-        </div>
-      </div>
-      <div class="share-records" id="shareRecords">
-        <div class="share-record-empty">正在加载分享记录...</div>
-      </div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn-outlined" id="shareNewBtn" onclick="resetShareForm()" style="display:none">新建分享</button>
-      <button class="btn-outlined" onclick="closeShareModal()">关闭</button>
-      <button class="fab" style="box-shadow:none" id="shareCreateBtn" onclick="submitShareForm()">
-        <span class="material-icons-round">ios_share</span> 创建分享
       </button>
     </div>
   </div>
@@ -6963,7 +6942,7 @@ export default {
 
     if (path === '/shares' && request.method === 'GET') {
       if (!await isAuthenticated(request, env)) return Response.redirect(new URL('/login', url).toString(), 302);
-      return htmlResponse(renderShareManagerPage(siteTitle, cloudIconUrl));
+      return Response.redirect(new URL('/', url).toString(), 302);
     }
     if (path === '/guide' && request.method === 'GET') {
       if (!await isAuthenticated(request, env)) return Response.redirect(new URL('/login', url).toString(), 302);
