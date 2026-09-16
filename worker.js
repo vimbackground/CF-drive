@@ -3831,7 +3831,10 @@ const WEBDAV_ALLOW = 'OPTIONS, PROPFIND, GET, HEAD, PUT, MKCOL, DELETE, COPY, MO
 const WEBDAV_LOCK_PREFIX = 'r2drive:webdav:lock:';
 const WEBDAV_LOCK_MAX_SECONDS = 60 * 60;
 const MANIFEST_CONTENT_TYPE = 'application/vnd.r2drive.manifest+json';
-const MANIFEST_VERSION = 1;
+// Version 1 manifests remain read-compatible. New distributed writes use the
+// v2 layout envelope, but remain Stripe-only until the Mirror data plane exists.
+const MANIFEST_VERSION = 2;
+const STORAGE_POLICY_VERSION = 1;
 const DOWNLOAD_RANGE_SIZE_BYTES = 32 * 1024 * 1024;
 const DOWNLOAD_OUTPUT_CHUNK_BYTES = 256 * 1024;
 const DOWNLOAD_NODE_FETCH_RETRIES = 3;
@@ -4511,7 +4514,41 @@ function publicAppSettings(config) {
     managedNode: {
       controllerUrl: String(config?.managedNode?.controllerUrl || ''),
       controllerCount: Array.isArray(config?.managedNode?.controllers) ? config.managedNode.controllers.length : 0
-    }
+    },
+    storagePolicy: publicStoragePolicy(config?.storagePolicy)
+  };
+}
+
+function defaultStoragePolicy() {
+  return {
+    version: STORAGE_POLICY_VERSION,
+    mode: 'stripe',
+    targetMode: null,
+    status: 'unprotected',
+    layoutVersion: 1,
+    updatedAt: ''
+  };
+}
+
+function normalizeStoragePolicy(value) {
+  const policy = { ...defaultStoragePolicy(), ...(value && typeof value === 'object' ? value : {}) };
+  // Mirror must not be selectable until its data and control planes are both implemented.
+  policy.mode = policy.mode === 'mirror' ? 'mirror' : 'stripe';
+  policy.targetMode = policy.targetMode === 'mirror' || policy.targetMode === 'stripe' ? policy.targetMode : null;
+  policy.status = String(policy.status || 'unprotected');
+  policy.layoutVersion = Math.max(1, Number(policy.layoutVersion) || 1);
+  return policy;
+}
+
+function publicStoragePolicy(value) {
+  const policy = normalizeStoragePolicy(value);
+  return {
+    version: policy.version,
+    mode: policy.mode,
+    targetMode: policy.targetMode,
+    status: policy.status,
+    layoutVersion: policy.layoutVersion,
+    updatedAt: policy.updatedAt || ''
   };
 }
 
@@ -4527,6 +4564,11 @@ async function getAppConfig(env) {
     changed = true;
   }
   if (!Array.isArray(next.managedNode.controllers)) { next.managedNode.controllers = []; changed = true; }
+  const normalizedPolicy = normalizeStoragePolicy(next.storagePolicy);
+  if (JSON.stringify(next.storagePolicy || {}) !== JSON.stringify(normalizedPolicy)) {
+    next.storagePolicy = normalizedPolicy;
+    changed = true;
+  }
   if (changed) await saveAppConfig(env, next);
   return next;
 }
@@ -4690,7 +4732,8 @@ async function createInitialAppConfig(body = {}) {
     storageNodeToken: '',
     instanceId: crypto.randomUUID(),
     instanceMode: 'standalone',
-    managedNode: { controllerUrl: '', controllers: [] }
+    managedNode: { controllerUrl: '', controllers: [] },
+    storagePolicy: { ...defaultStoragePolicy(), updatedAt: new Date().toISOString() }
   };
 }
 
@@ -6214,6 +6257,20 @@ function isManifestFile(manifest) {
   return manifest && manifest.type === 'distributed-file' && Array.isArray(manifest.parts);
 }
 
+function manifestPartReplicas(part) {
+  if (Array.isArray(part?.replicas) && part.replicas.length) return part.replicas;
+  // v1 fields remain the source of truth for old manifests.
+  return [{
+    storageId: part?.nodeId || MAIN_STORAGE_NODE_ID,
+    key: part?.key || '',
+    storageType: part?.storageType || 'node',
+    nodeId: part?.nodeId || MAIN_STORAGE_NODE_ID,
+    nodeName: part?.nodeName || '',
+    nodeUrl: part?.nodeUrl || '',
+    state: 'healthy'
+  }];
+}
+
 async function storageNodeHasManifestReferences(R2, nodeId) {
   let cursor;
   let pages = 0;
@@ -6222,7 +6279,7 @@ async function storageNodeHasManifestReferences(R2, nodeId) {
     for (const object of listed.objects || []) {
       if (!hasManifestMetadata(object)) continue;
       const manifest = await readManifestObject(await R2.get(object.key));
-      if (isManifestFile(manifest) && manifest.parts.some(part => part.nodeId === nodeId)) return true;
+      if (isManifestFile(manifest) && manifest.parts.some(part => manifestPartReplicas(part).some(replica => (replica.storageId || replica.nodeId) === nodeId))) return true;
     }
     cursor = listed.cursor;
     pages++;
@@ -7440,6 +7497,18 @@ export default {
       return jsonResponse({ shares: shares.map(publicShare).filter(Boolean) });
     }
 
+    if (path === '/api/storage-policy' && request.method === 'GET') {
+      if (!appConfig) return jsonResponse({ ok: false, error: 'legacy configuration migration required' }, 409);
+      return jsonResponse({
+        ok: true,
+        policy: publicStoragePolicy(appConfig.storagePolicy),
+        capabilities: {
+          stripe: { write: true, consolidation: false },
+          mirror: { write: false, recovery: false }
+        }
+      });
+    }
+
     if (path === '/api/shares/refresh' && request.method === 'POST') {
       try {
         const body = await request.json().catch(() => ({}));
@@ -7983,22 +8052,41 @@ export default {
       const raw = await kvGetRaw(env, MULTIPART_SESSION_PREFIX + sessionId);
       if (!raw) return jsonResponse({ ok: false, error: 'session expired' }, 404);
       const session = JSON.parse(raw);
+      const policy = publicStoragePolicy(appConfig?.storagePolicy);
+      if (policy.mode !== 'stripe') {
+        return jsonResponse({ ok: false, error: 'selected storage policy is not available for new uploads' }, 409);
+      }
       const manifest = {
         type: 'distributed-file',
         version: MANIFEST_VERSION,
+        layoutVersion: policy.layoutVersion,
+        mode: 'stripe',
+        generation: 1,
         path: session.path,
         size: session.size,
         contentType: session.contentType,
         createdAt: session.createdAt,
         completedAt: new Date().toISOString(),
-        parts: session.parts.map(part => ({
+        parts: session.parts.map((part, index) => ({
           partNumber: part.partNumber,
+          partId: crypto.randomUUID(),
+          offset: session.parts.slice(0, index).reduce((sum, previous) => sum + Number(previous.size || 0), 0),
           size: part.size,
+          hash: null,
           key: part.key,
           storageType: part.storageType || 'node',
           nodeId: part.nodeId,
           nodeName: part.nodeName,
-          nodeUrl: part.nodeUrl
+          nodeUrl: part.nodeUrl,
+          replicas: [{
+            storageId: part.nodeId,
+            key: part.key,
+            storageType: part.storageType || 'node',
+            nodeId: part.nodeId,
+            nodeName: part.nodeName,
+            nodeUrl: part.nodeUrl,
+            state: 'healthy'
+          }]
         }))
       };
       const object = await R2.put(session.storageKey, JSON.stringify(manifest), {

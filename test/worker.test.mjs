@@ -101,7 +101,14 @@ test('owner-signed setup stores configuration in D1 and enables password login',
   assert.equal(shares.headers.get('Location'), 'https://drive.example/');
   const settings = await worker.fetch(apiRequest('GET', '/api/settings', undefined, cookie), env, ctx);
   assert.equal(settings.status, 200);
-  assert.equal((await settings.json()).settings.siteTitle, 'My CF-drive');
+  const settingsBody = await settings.json();
+  assert.equal(settingsBody.settings.siteTitle, 'My CF-drive');
+  assert.deepEqual(settingsBody.settings.storagePolicy, {
+    version: 1, mode: 'stripe', targetMode: null, status: 'unprotected', layoutVersion: 1, updatedAt: settingsBody.settings.storagePolicy.updatedAt
+  });
+  const policy = await worker.fetch(apiRequest('GET', '/api/storage-policy', undefined, cookie), env, ctx);
+  assert.equal(policy.status, 200);
+  assert.equal((await policy.json()).capabilities.mirror.write, false);
 
   const updated = await worker.fetch(apiRequest('PUT', '/api/settings', {
     siteTitle: 'Configured CF-drive',
@@ -161,6 +168,31 @@ test('controller stores node credentials encrypted in D1 and never returns them'
   assert.equal(body.nodes.length, 1);
   assert.equal(body.nodes[0].credentialConfigured, true);
   assert.equal(Object.hasOwn(body.nodes[0], 'token'), false);
+});
+
+test('distributed uploads write a v2 Stripe manifest while v1 remains readable', async () => {
+  const ctx = { waitUntil() {} };
+  const instance = await initializedInstance('https://drive.example', 'controller-password', {}, ctx);
+  const size = 600 * 1024;
+  const init = await worker.fetch(apiRequest('POST', '/api/distributed/init', {
+    path: 'archive/large.bin', size, chunkSize: size, parts: 1, contentType: 'application/octet-stream'
+  }, instance.cookie), instance.env, ctx);
+  assert.equal(init.status, 200);
+  const session = await init.json();
+  const upload = await worker.fetch(new Request('https://drive.example' + session.parts[0].uploadUrl, {
+    method: 'PUT', headers: { Cookie: instance.cookie, 'X-R2Drive-CSRF': 'same-origin', 'Content-Length': String(size) }, body: new Uint8Array(size)
+  }), instance.env, ctx);
+  assert.equal(upload.status, 200);
+  const complete = await worker.fetch(apiRequest('POST', '/api/distributed/complete', { sessionId: session.sessionId }, instance.cookie), instance.env, ctx);
+  assert.equal(complete.status, 200);
+  const manifests = await instance.env.R2_BUCKET.list({ include: ['customMetadata'] });
+  const manifestKey = manifests.objects.find(item => item.customMetadata.r2driveManifest === '1').key;
+  const manifest = await new Response((await instance.env.R2_BUCKET.get(manifestKey)).body).json();
+  assert.equal(manifest.version, 2);
+  assert.equal(manifest.mode, 'stripe');
+  assert.equal(manifest.layoutVersion, 1);
+  assert.equal(manifest.parts[0].replicas.length, 1);
+  assert.equal(manifest.parts[0].replicas[0].state, 'healthy');
 });
 
 test('one-time enrollment makes B a scoped managed node controlled by A', async () => {
