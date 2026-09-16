@@ -90,6 +90,11 @@ test('owner-signed setup stores configuration in D1 and enables password login',
   const guide = await worker.fetch(new Request('https://drive.example/guide', { headers: { Cookie: cookie } }), env, ctx);
   assert.equal(guide.status, 200);
   assert.match(await guide.text(), /WebDAV 使用/);
+  const shares = await worker.fetch(new Request('https://drive.example/shares', { headers: { Cookie: cookie } }), env, ctx);
+  assert.equal(shares.status, 200);
+  const sharesHtml = await shares.text();
+  assert.match(sharesHtml, /id="shareWorkspace"/);
+  assert.match(sharesHtml, /分享管理/);
   const settings = await worker.fetch(apiRequest('GET', '/api/settings', undefined, cookie), env, ctx);
   assert.equal(settings.status, 200);
   assert.equal((await settings.json()).settings.siteTitle, 'My CF-drive');

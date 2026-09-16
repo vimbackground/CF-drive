@@ -407,6 +407,9 @@ function renderHTML(content, title = 'CF-drive') {
   .file-card:hover .file-card-actions { opacity: 1; }
   .file-card-primary-actions { display: flex; gap: 6px; margin-top: auto; }
   .file-card-primary-actions .btn-outlined { flex: 1; min-width: 0; height: 32px; padding: 0 8px; font-size: 12px; }
+  .share-status { display: inline-flex; align-items: center; gap: 4px; width: fit-content; padding: 2px 7px; border-radius: 999px; font-size: 11px; color: var(--on-surface-variant); background: rgba(95,99,104,.10); }
+  .file-card.is-shared .share-status, .file-list tr.is-shared .share-status { color: var(--success); background: rgba(30,142,62,.12); }
+  .file-card.is-shared .share-action, .file-list tr.is-shared .share-action { color: var(--success); border-color: var(--success); }
 
   /* ── File List (Table) ── */
   .file-list { width: 100%; border-collapse: collapse; }
@@ -431,6 +434,7 @@ function renderHTML(content, title = 'CF-drive') {
   .file-row-meta { font-size: 13px; color: var(--on-surface-variant); white-space: nowrap; }
   .file-row-actions { display: flex; gap: 4px; }
   .file-row-actions .btn-outlined { height: 32px; padding: 0 8px; font-size: 12px; white-space: nowrap; }
+  .file-row-name-wrap { min-width: 0; display: flex; align-items: center; gap: 8px; }
 
   /* ── Empty State ── */
   .empty-state {
@@ -537,6 +541,10 @@ function renderHTML(content, title = 'CF-drive') {
   .upload-zone .material-icons-round { font-size: 48px; color: var(--primary); margin-bottom: 12px; }
   .upload-zone h4 { font-family: var(--font-display); font-size: 16px; margin-bottom: 4px; }
   .upload-zone p { font-size: 13px; color: var(--on-surface-variant); }
+  .upload-zone.upload-finished { opacity: .65; pointer-events: none; }
+  .upload-modal-status { min-height: 20px; margin-top: 12px; color: var(--on-surface-variant); font-size: 13px; }
+  .upload-modal-status.success { color: var(--success); }
+  .upload-modal-status.error { color: var(--error); }
 
   /* ── Preview Modal ── */
   .preview-overlay {
@@ -713,6 +721,14 @@ function renderHTML(content, title = 'CF-drive') {
   .view-toggle-btn:hover { background: rgba(60,64,67,.08); }
   .view-toggle-btn.active { background: var(--primary-light); color: var(--primary); }
   .view-toggle-btn .material-icons-round { font-size: 20px; }
+  .top-action { height: 36px; padding: 0 12px; font-size: 13px; }
+  .selection-mode-active { color: var(--primary); border-color: var(--primary); background: var(--primary-light); }
+  .share-page { max-width: 1100px; margin: 0 auto; }
+  .share-page-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
+  .share-page-layout { display: grid; grid-template-columns: minmax(300px, .9fr) minmax(0, 1.4fr); gap: 20px; }
+  .share-page-panel { border: 1px solid var(--outline); border-radius: var(--radius-m); background: var(--surface); padding: 20px; }
+  .share-page-panel .share-records { margin-top: 0; border-top: none; padding-top: 0; max-height: none; }
+  @media (max-width: 800px) { .share-page-layout { grid-template-columns: 1fr; } .top-action-label { display: none; } .top-action { width: 36px; padding: 0; justify-content: center; } }
 
   /* ── Responsive ── */
   @media (max-width: 768px) {
@@ -743,7 +759,9 @@ function renderHTML(content, title = 'CF-drive') {
   .context-menu-divider { height: 1px; background: var(--outline); margin: 4px 0; }
 
   /* ── Storage Bar ── */
-  .storage-info { padding: 16px; margin-top: auto; border: none; background: transparent; text-align: left; width: 100%; cursor: pointer; }
+  .sidebar-bottom { margin-top: auto; }
+  .storage-node-shortcut { margin-bottom: 4px; }
+  .storage-info { padding: 16px; margin-top: 0; border: none; background: transparent; text-align: left; width: 100%; cursor: pointer; }
   .storage-info:hover { background: rgba(60,64,67,.08); }
   .storage-bar { height: 4px; background: var(--outline); border-radius: 2px; overflow: hidden; margin: 6px 0; }
   .storage-fill { height: 100%; background: var(--primary); border-radius: 2px; }
@@ -1038,12 +1056,18 @@ const LOCAL_ICON_GLYPHS = Object.freeze({
   create_new_folder: '▰', dark_mode: '◐', delete_forever: '⊗', delete_outline: '⌫',
   description: '▤', download: '⇩', downloading: '⇩', drive_file_rename_outline: '✎',
   edit: '✎', folder: '▰', folder_open: '▱', folder_zip: '▰', grid_view: '▦',
-  help_outline: '?', hourglass_empty: '⌛', hub: '◉', image: '▧', insert_drive_file: '▤',
+  help_outline: '?', hourglass_empty: '⌛', hub: '◉', image: '▧', insert_drive_file: '▤', light_mode: '☼', lock: '▣',
   ios_share: '↗', link: '↗', link_off: '⊘', logout: '⇥', more_vert: '⋮', movie: '▶',
   network_check: '◉', refresh: '↻', save: '▣', search: '⌕', settings: '⚙', slideshow: '▻',
   sync: '↻', table_chart: '▦', unfold_more: '↕', upload: '⇧', upload_file: '⇧',
-  view_list: '☷', visibility: '◉'
+  view_list: '☷', visibility: '◉', chevron_right: '›'
 });
+function setLocalIconGlyph(icon, name) {
+  if (!icon) return;
+  icon.dataset.iconName = name;
+  icon.textContent = LOCAL_ICON_GLYPHS[name] || name;
+  icon.setAttribute('aria-hidden', 'true');
+}
 function replaceRemoteIconGlyphs(root = document) {
   const icons = [];
   if (root?.matches?.('.material-icons-round')) icons.push(root);
@@ -1052,9 +1076,7 @@ function replaceRemoteIconGlyphs(root = document) {
     const name = icon.dataset.iconName || icon.textContent.trim();
     const glyph = LOCAL_ICON_GLYPHS[name];
     if (!glyph) return;
-    icon.dataset.iconName = name;
-    icon.textContent = glyph;
-    icon.setAttribute('aria-hidden', 'true');
+    setLocalIconGlyph(icon, name);
   });
 }
 replaceRemoteIconGlyphs();
@@ -1063,6 +1085,7 @@ new MutationObserver(records => records.forEach(record => record.addedNodes.forE
 // ── State ──
 let viewMode = localStorage.getItem('viewMode') || 'list';
 let selectedFiles = new Set();
+let selectionMode = false;
 let ctxTarget = null;
 let currentPath = '';
 let sortBy = 'name';
@@ -1267,10 +1290,10 @@ let previewName = '';
 
 function getPreviewType(name) {
   const ext = name.split('.').pop()?.toLowerCase() || '';
-  const imageExts = ['jpg','jpeg','png','gif','webp','svg','bmp','ico'];
+  const imageExts = ['jpg','jpeg','png','gif','webp','svg','bmp','ico','avif','tif','tiff'];
   const videoExts = ['mp4','webm','ogg','avi','mov','mkv'];
   const audioExts = ['mp3','wav','flac','aac','m4a','opus'];
-  const textExts = ['txt','md','html','css','js','ts','py','java','c','cpp','h','hpp','go','rs','rb','php','json','xml','yaml','yml','log','sh','bash','sql','conf','ini','cfg','toml','env','gitignore','Makefile','Dockerfile','cmake','gradle','svelte','vue','jsx','tsx','mjs','cjs'];
+  const textExts = ['txt','md','html','css','js','ts','py','java','c','cpp','h','hpp','go','rs','rb','php','json','xml','yaml','yml','log','sh','bash','sql','conf','ini','cfg','toml','env','gitignore','csv','Makefile','Dockerfile','cmake','gradle','svelte','vue','jsx','tsx','mjs','cjs'];
   if (imageExts.includes(ext)) return 'image';
   if (videoExts.includes(ext)) return 'video';
   if (audioExts.includes(ext)) return 'audio';
@@ -1368,36 +1391,34 @@ function loadPreview(path, name) {
 }
 
 // ── Selection ──
-// ── File Click: single click selects, double click previews (or downloads for unsupported types)
-function handleFileClick(event, name) {
-  if (event.detail === 1) {
-    toggleSelect(name, event.currentTarget);
-  } else if (event.detail === 2) {
-    const path = currentPath ? currentPath + '/' + name : name;
-    const type = getPreviewType(name);
-    if (type) {
-      openPreview(path, name);
-    } else {
-      const size = Number(event.currentTarget?.dataset.size || getFileSizeByName(name) || 0);
-      startDownload(path, size);
-    }
+function toggleSelectionMode() {
+  selectionMode = !selectionMode;
+  if (!selectionMode) clearSelection();
+  const btn = document.getElementById('selectionModeBtn');
+  if (btn) {
+    btn.classList.toggle('selection-mode-active', selectionMode);
+    btn.innerHTML = '<span class="material-icons-round">' + (selectionMode ? 'check' : 'content_copy') + '</span> ' + (selectionMode ? '完成选择' : '选择');
   }
+  showSnackbar(selectionMode ? '已开启选择模式：单击文件或目录可选中' : '已退出选择模式');
 }
-
-// ── Folder Click: single click selects, double click navigates
-function handleFolderClick(event, name, href) {
-  if (event.ctrlKey || event.metaKey) {
+function handleFileClick(event, name) {
+  if (event.detail !== 1) return;
+  if (selectionMode || event.ctrlKey || event.metaKey) {
     toggleSelect(name, event.currentTarget);
     return;
   }
-  // Check if this is a single click or part of a double click
-  if (event.detail === 1) {
-    // Single click: toggle select (to allow rename, copy, etc.)
+  const path = currentPath ? currentPath + '/' + name : name;
+  const type = getPreviewType(name);
+  if (type === 'image' || type === 'text') openPreview(path, name);
+  else startDownload(path, Number(event.currentTarget?.dataset.size || getFileSizeByName(name) || 0));
+}
+function handleFolderClick(event, name, href) {
+  if (event.detail !== 1) return;
+  if (selectionMode || event.ctrlKey || event.metaKey) {
     toggleSelect(name, event.currentTarget);
-  } else if (event.detail === 2) {
-    // Double click: navigate into folder
-    location.href = href;
+    return;
   }
+  location.href = href;
 }
 
 function toggleSelect(name, el) {
@@ -1454,7 +1475,7 @@ function applyDarkMode(isDark) {
   else html.removeAttribute('data-theme');
   localStorage.setItem('theme', isDark ? 'dark' : '');
   document.querySelectorAll('#darkModeToggle .material-icons-round').forEach(icon => {
-    icon.textContent = isDark ? 'light_mode' : 'dark_mode';
+    setLocalIconGlyph(icon, isDark ? 'light_mode' : 'dark_mode');
   });
 }
 
@@ -1959,6 +1980,46 @@ function copyDirectLink(path) {
   const url = location.origin + '/api/download?path=' + encodeURIComponent(path);
   navigator.clipboard.writeText(url).then(() => showSnackbar('链接已复制')).catch(() => window.prompt('请手动复制链接', url));
 }
+let driveSharesByPath = new Map();
+async function loadDriveShareStatus() {
+  const targets = [...document.querySelectorAll('[data-share-path]')];
+  if (!targets.length) return;
+  try {
+    const res = await fetch('/api/shares');
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'load shares failed');
+    driveSharesByPath = new Map();
+    (data.shares || []).forEach(share => {
+      const list = driveSharesByPath.get(share.path) || [];
+      list.push(share);
+      driveSharesByPath.set(share.path, list);
+    });
+    targets.forEach(target => {
+      const shares = driveSharesByPath.get(target.dataset.sharePath) || [];
+      const share = shares.find(item => !item.inactiveReason) || shares[0];
+      const shared = !!share;
+      target.classList.toggle('is-shared', shared);
+      const status = target.querySelector('[data-share-status]');
+      if (status) status.textContent = shared ? (share.inactiveReason ? '分享已失效' : '已分享') : '未分享';
+      const action = target.querySelector('[data-share-action]');
+      if (action) {
+        action.title = shared ? '管理分享' : '创建分享';
+        action.innerHTML = '<span class="material-icons-round">ios_share</span> ' + (shared ? '管理分享' : '创建分享');
+      }
+      const copy = target.querySelector('[data-share-copy]');
+      if (copy) {
+        copy.title = shared ? '复制分享链接' : '复制直链';
+        copy.innerHTML = '<span class="material-icons-round">link</span> ' + (shared ? '复制分享链接' : '复制直链');
+      }
+    });
+  } catch (err) { console.warn('load share status failed:', err?.message || err); }
+}
+function copyShareOrDirectLink(path) {
+  const shares = driveSharesByPath.get(path) || [];
+  const share = shares.find(item => !item.inactiveReason) || null;
+  if (share) return navigator.clipboard.writeText(shareAbsoluteUrl(share)).then(() => showSnackbar('分享链接已复制')).catch(() => window.prompt('请手动复制分享链接', shareAbsoluteUrl(share)));
+  copyDirectLink(path);
+}
 let shareTargetPathValue = '';
 let createdShareLink = '';
 let shareEditId = '';
@@ -1966,7 +2027,7 @@ let shareRecordsCache = [];
 let shareManagerMode = false;
 let shareLoadSequence = 0;
 function openShareManager() {
-  openShareModal('');
+  location.href = '/shares';
 }
 function openShareModal(path) {
   shareManagerMode = !path;
@@ -1994,6 +2055,7 @@ function openShareModal(path) {
 }
 function closeShareModal() {
   shareLoadSequence++;
+  if (document.getElementById('shareWorkspace')) { location.href = '/'; return; }
   document.getElementById('shareModal')?.classList.remove('open');
 }
 function resetShareForm() {
@@ -2278,7 +2340,7 @@ function selectedPathFromName(name) {
   return currentPath ? currentPath + '/' + name : name;
 }
 async function createShareForPath(path) {
-  openShareModal(path);
+  location.href = '/shares?path=' + encodeURIComponent(path);
 }
 function ctxShare() {
   if (!ctxTarget) return;
@@ -2293,8 +2355,36 @@ function ctxDelete() {
 }
 
 // ── Upload ──
-function openUpload() { document.getElementById('uploadModal')?.classList.add('open'); }
-function closeUpload() { document.getElementById('uploadModal')?.classList.remove('open'); }
+let uploadBatchState = 'idle';
+function setUploadModalState(state, message = '') {
+  uploadBatchState = state;
+  const zone = document.querySelector('.upload-zone');
+  const status = document.getElementById('uploadModalStatus');
+  const selectBtn = document.getElementById('uploadSelectBtn');
+  const closeBtn = document.getElementById('uploadCloseBtn');
+  zone?.classList.toggle('upload-finished', state === 'completed');
+  if (status) { status.textContent = message; status.className = 'upload-modal-status' + (state === 'completed' ? ' success' : state === 'failed' ? ' error' : ''); }
+  if (selectBtn) {
+    selectBtn.disabled = state === 'uploading';
+    selectBtn.innerHTML = state === 'completed'
+      ? '<span class="material-icons-round">refresh</span> 刷新文件列表'
+      : '<span class="material-icons-round">folder_open</span> 选择文件';
+    selectBtn.onclick = state === 'completed' ? () => location.reload() : () => document.getElementById('fileInput')?.click();
+  }
+  if (closeBtn) closeBtn.disabled = state === 'uploading';
+}
+function openUpload() {
+  document.getElementById('uploadModal')?.classList.add('open');
+  if (uploadBatchState === 'idle') setUploadModalState('idle', '可拖放文件到上方区域，或选择文件上传。');
+}
+function closeUpload() {
+  if (uploadBatchState === 'uploading') return;
+  document.getElementById('uploadModal')?.classList.remove('open');
+  if (uploadBatchState !== 'idle') {
+    uploadBatchState = 'idle';
+    document.getElementById('progressList').innerHTML = '';
+  }
+}
 function openNewFolder() { document.getElementById('newFolderModal')?.classList.add('open'); setTimeout(() => document.getElementById('folderNameInput')?.focus(), 100); }
 function closeNewFolder() { document.getElementById('newFolderModal')?.classList.remove('open'); }
 
@@ -2303,9 +2393,9 @@ function handleDrop(e) {
   document.querySelector('.upload-zone')?.classList.remove('drag-over');
   uploadFiles(e.dataTransfer.files);
 }
-function handleDragOver(e) { e.preventDefault(); document.querySelector('.upload-zone')?.classList.add('drag-over'); }
+function handleDragOver(e) { if (uploadBatchState !== 'uploading') { e.preventDefault(); document.querySelector('.upload-zone')?.classList.add('drag-over'); } }
 function handleDragLeave() { document.querySelector('.upload-zone')?.classList.remove('drag-over'); }
-function handleFileInput(e) { uploadFiles(e.target.files); }
+function handleFileInput(e) { uploadFiles(e.target.files); e.target.value = ''; }
 
 const DIRECT_UPLOAD_LIMIT = 512 * 1024; // 512 KB - 小于此大小的文件直传主 R2，大于则走分布式存储
 const MULTIPART_DEFAULT_CHUNK = 32 * 1024 * 1024;
@@ -2313,7 +2403,9 @@ const MULTIPART_MAX_CHUNK = 90 * 1024 * 1024;
 const MULTIPART_MAX_PARTS = 10000;
 
 function uploadFiles(files) {
+  if (uploadBatchState === 'uploading') { showSnackbar('文件正在上传，请等待当前任务完成'); return; }
   if (!files.length) return;
+  setUploadModalState('uploading', '正在上传，请勿关闭此窗口。');
   const list = document.getElementById('progressList');
   if (list) list.innerHTML = '';
   const tasks = [...files].map(file => {
@@ -2335,10 +2427,12 @@ function uploadFiles(files) {
     const failed = results.filter(result => result.status === 'rejected');
     if (failed.length) {
       const message = failed[0].reason?.message || '上传失败';
+      setUploadModalState('failed', failed.length + ' 个文件上传失败，可重新选择文件。');
       showSnackbar(failed.length + ' 个文件上传失败：' + message);
       return;
     }
-    showSnackbar('上传完成', '刷新', () => location.reload());
+    setUploadModalState('completed', '上传完成。刷新文件列表后即可看到新文件。');
+    showSnackbar('上传完成，请刷新文件列表查看。');
   });
 }
 
@@ -2846,12 +2940,15 @@ function logout() { fetch('/api/logout', { method: 'POST', headers: CSRF_HEADER 
 
 // ── Init ──
 document.addEventListener('DOMContentLoaded', () => {
+  const params = new URLSearchParams(location.search);
+  currentPath = decodeURIComponent(params.get('path') || '');
   setView(viewMode);
-  currentPath = decodeURIComponent(new URLSearchParams(location.search).get('path') || '');
   initDarkMode();
   checkClipboardFromStore();
   updateStorageInfo();
   updateActionBar();
+  if (document.getElementById('shareWorkspace')) openShareModal(currentPath);
+  else loadDriveShareStatus();
 });
 </script>
 </body>
@@ -3177,13 +3274,47 @@ function renderConditionalSharePage(share, options = {}, siteTitle, cloudIconUrl
 `, siteTitle + ' - 分享目录');
 }
 
+function renderShareManagerPage(siteTitle, cloudIconUrl = '') {
+  return renderHTML(`
+<header class="app-bar">
+  <a class="app-bar-logo" href="/">${renderLogoIcon(cloudIconUrl)}<span class="app-bar-title">${escapeHtml(siteTitle)}</span></a>
+  <div class="app-bar-spacer"></div>
+  <div class="app-bar-actions">
+    <a class="btn-outlined top-action" href="/"><span class="material-icons-round">arrow_back</span><span class="top-action-label">文件管理</span></a>
+    <button class="btn-outlined top-action" id="darkModeToggle" onclick="toggleDarkMode(event)"><span class="material-icons-round">dark_mode</span><span class="top-action-label">主题</span></button>
+    <button class="btn-outlined top-action" onclick="logout()"><span class="material-icons-round">logout</span><span class="top-action-label">退出</span></button>
+  </div>
+</header>
+<main class="main" id="shareWorkspace">
+  <div class="share-page">
+    <div class="share-page-head"><div><h1 class="modal-title" id="shareModalTitle">分享管理</h1><p class="share-hint">集中查看、编辑、刷新或取消所有分享链接。</p></div></div>
+    <div class="share-page-layout">
+      <section class="share-page-panel">
+        <div class="share-summary"><span class="material-icons-round">insert_drive_file</span><div class="share-summary-main"><div class="share-summary-label">分享对象</div><div class="share-summary-path" id="shareTargetPath"></div></div></div>
+        <div class="share-form-grid" id="shareFormGrid">
+          <div class="full"><label class="field-label" for="shareSuffixInput">分享链接后缀 /s/</label><input class="text-field" id="shareSuffixInput" type="text" maxlength="64" placeholder="例如 my-file，留空自动生成" autocomplete="off" spellcheck="false"><div class="share-hint">1–64 位字母、数字、下划线或短横线，以字母或数字开头。</div></div>
+          <div class="full"><label class="field-label" for="sharePasswordInput">访问密码</label><input class="text-field" id="sharePasswordInput" type="password" placeholder="留空表示无需密码"><div class="share-hint" id="sharePasswordHint">创建新分享时留空表示无需密码</div><label class="share-hint" id="shareClearPasswordLabel" style="display:none;align-items:center;gap:6px"><input type="checkbox" id="shareClearPasswordInput"> 移除当前密码</label></div>
+          <div><label class="field-label" for="shareDaysInput">有效天数</label><input class="text-field" id="shareDaysInput" type="number" min="0" step="1" placeholder="0"><div class="share-hint">0 或留空表示长期有效</div></div>
+          <div><label class="field-label" for="shareMaxAccessInput">访问次数</label><input class="text-field" id="shareMaxAccessInput" type="number" min="0" step="1" placeholder="0"><div class="share-hint">0 或留空表示不限次数</div></div>
+        </div>
+        <div class="share-result" id="shareResult"><div class="share-hint">分享链接已创建</div><div class="share-link-row"><input class="text-field" id="shareLinkInput" type="text" readonly><button class="btn-outlined" onclick="copyCreatedShareLink()"><span class="material-icons-round">content_copy</span> 复制</button></div></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:18px"><button class="btn-outlined" id="shareNewBtn" onclick="resetShareForm()" style="display:none">新建分享</button><button class="btn-outlined" onclick="closeShareModal()">返回文件管理</button><button class="fab" style="box-shadow:none" id="shareCreateBtn" onclick="submitShareForm()"><span class="material-icons-round">ios_share</span> 创建分享</button></div>
+      </section>
+      <section class="share-page-panel">
+        <input class="text-field" id="shareSearchInput" type="search" placeholder="搜索分享路径或后缀" aria-label="搜索分享" style="margin-bottom:14px" oninput="renderShareRecords(shareRecordsCache)">
+        <div class="share-records" id="shareRecords"><div class="share-record-empty">正在加载分享记录...</div></div>
+      </section>
+    </div>
+  </div>
+</main>`, siteTitle + ' - 分享管理');
+}
 function renderDrivePage(folders, files, currentPath, siteTitle, cloudIconUrl = '') {
   const pathParts = currentPath ? currentPath.split('/').filter(Boolean) : [];
 
   const breadcrumb = `<nav class="breadcrumb">
     <div class="breadcrumb-item">
       <a class="breadcrumb-link" href="/">
-        <span class="material-icons-round" style="font-size:18px;vertical-align:middle">cloud</span> 我的云盘
+        <span class="material-icons-round" style="font-size:18px;vertical-align:middle">cloud</span> 文件管理
       </a>
     </div>
     ${pathParts.map((part, i) => {
@@ -3198,21 +3329,21 @@ function renderDrivePage(folders, files, currentPath, siteTitle, cloudIconUrl = 
 
     const renderFolderCard = (name) => {
     const href = '/?path=' + encodeURIComponent(currentPath ? currentPath + '/' + name : name);
-    return `<div class="file-card" onclick="${jsAttr(`handleFolderClick(event, ${jsString(name)}, ${jsString(href)})`)}"
+    return `<div class="file-card" data-share-path="${escapeAttr(currentPath ? currentPath + '/' + name : name)}" onclick="${jsAttr(`handleFolderClick(event, ${jsString(name)}, ${jsString(href)})`)}"
         oncontextmenu="${jsAttr(`showCtxMenu(event, ${jsString(name)})`)}">
       <div class="file-card-icon" style="background:#FFF8E1">
         <span class="material-icons-round" style="color:#F9AB00;font-size:32px">folder</span>
       </div>
       <div class="file-card-name">${escapeHtml(name)}</div>
-      <div class="file-card-meta"><span>文件夹</span></div>
+      <div class="file-card-meta"><span>文件夹</span><span class="share-status" data-share-status>未分享</span></div>
       <div class="file-card-actions">
         <button class="icon-btn" title="更多" onclick="${jsAttr(`event.stopPropagation();showCtxMenu(event, ${jsString(name)})`)}">
           <span class="material-icons-round">more_vert</span>
         </button>
       </div>
       <div class="file-card-primary-actions">
-        <button class="btn-outlined" title="分享设置" onclick="${jsAttr(`event.stopPropagation();createShareForPath(${jsString(currentPath ? currentPath + '/' + name : name)})`)}"><span class="material-icons-round">ios_share</span> 分享设置</button>
-        <button class="btn-outlined" title="复制链接" onclick="${jsAttr(`event.stopPropagation();copyDirectLink(${jsString(currentPath ? currentPath + '/' + name : name)})`)}"><span class="material-icons-round">link</span> 复制链接</button>
+        <button class="btn-outlined share-action" data-share-action title="创建分享" onclick="${jsAttr(`event.stopPropagation();createShareForPath(${jsString(currentPath ? currentPath + '/' + name : name)})`)}"><span class="material-icons-round">ios_share</span> 创建分享</button>
+        <button class="btn-outlined share-copy-action" data-share-copy title="复制直链" onclick="${jsAttr(`event.stopPropagation();copyShareOrDirectLink(${jsString(currentPath ? currentPath + '/' + name : name)})`)}"><span class="material-icons-round">link</span> 复制直链</button>
       </div>
     </div>`;
   };
@@ -3221,7 +3352,7 @@ function renderDrivePage(folders, files, currentPath, siteTitle, cloudIconUrl = 
     const { icon, color } = getFileIcon(file.name);
     const path = currentPath ? currentPath + '/' + file.name : file.name;
     const size = Number(file.size) || 0;
-    return `<div class="file-card" data-name="${escapeAttr(file.name)}" data-size="${size}" onclick="${jsAttr(`handleFileClick(event, ${jsString(file.name)})`)}"
+    return `<div class="file-card" data-name="${escapeAttr(file.name)}" data-size="${size}" data-share-path="${escapeAttr(path)}" onclick="${jsAttr(`handleFileClick(event, ${jsString(file.name)})`)}"
         oncontextmenu="${jsAttr(`showCtxMenu(event, ${jsString(file.name)})`)}">
       <div class="file-card-icon" style="background:${color}18">
         <span class="material-icons-round" style="color:${color};font-size:32px">${icon}</span>
@@ -3230,6 +3361,7 @@ function renderDrivePage(folders, files, currentPath, siteTitle, cloudIconUrl = 
       <div class="file-card-meta">
         <span>${formatSize(size)}</span>
         <span>${formatDate(file.uploaded)}</span>
+        <span class="share-status" data-share-status>未分享</span>
       </div>
       <div class="file-card-actions">
         <button class="icon-btn" title="下载" onclick="${jsAttr(`event.stopPropagation();startDownload(${jsString(path)}, ${size})`)}">
@@ -3240,24 +3372,24 @@ function renderDrivePage(folders, files, currentPath, siteTitle, cloudIconUrl = 
         </button>
       </div>
       <div class="file-card-primary-actions">
-        <button class="btn-outlined" title="分享设置" onclick="${jsAttr(`event.stopPropagation();createShareForPath(${jsString(path)})`)}"><span class="material-icons-round">ios_share</span> 分享设置</button>
-        <button class="btn-outlined" title="复制链接" onclick="${jsAttr(`event.stopPropagation();copyDirectLink(${jsString(path)})`)}"><span class="material-icons-round">link</span> 复制链接</button>
+        <button class="btn-outlined share-action" data-share-action title="创建分享" onclick="${jsAttr(`event.stopPropagation();createShareForPath(${jsString(path)})`)}"><span class="material-icons-round">ios_share</span> 创建分享</button>
+        <button class="btn-outlined share-copy-action" data-share-copy title="复制直链" onclick="${jsAttr(`event.stopPropagation();copyShareOrDirectLink(${jsString(path)})`)}"><span class="material-icons-round">link</span> 复制直链</button>
       </div>
     </div>`;
   };
 
     const renderFolderRow = (name) => {
     const href = '/?path=' + encodeURIComponent(currentPath ? currentPath + '/' + name : name);
-    return `<tr data-name="${escapeAttr(name)}" data-size="0" data-date="" onclick="${jsAttr(`handleFolderClick(event, ${jsString(name)}, ${jsString(href)})`)}">
+    return `<tr data-name="${escapeAttr(name)}" data-share-path="${escapeAttr(currentPath ? currentPath + '/' + name : name)}" data-size="0" data-date="" onclick="${jsAttr(`handleFolderClick(event, ${jsString(name)}, ${jsString(href)})`)}">
       <td><div class="file-row-icon">
         <span class="material-icons-round" style="color:#F9AB00;font-size:22px">folder</span>
-        <span class="file-row-name">${escapeHtml(name)}</span>
+        <span class="file-row-name-wrap"><span class="file-row-name">${escapeHtml(name)}</span><span class="share-status" data-share-status>未分享</span></span>
       </div></td>
       <td class="file-row-meta">—</td>
       <td class="file-row-meta">—</td>
       <td><div class="file-row-actions">
-        <button class="btn-outlined" title="分享设置" onclick="${jsAttr(`event.stopPropagation();createShareForPath(${jsString(currentPath ? currentPath + '/' + name : name)})`)}"><span class="material-icons-round">ios_share</span> 分享设置</button>
-        <button class="btn-outlined" title="复制链接" onclick="${jsAttr(`event.stopPropagation();copyDirectLink(${jsString(currentPath ? currentPath + '/' + name : name)})`)}"><span class="material-icons-round">link</span> 复制链接</button>
+        <button class="btn-outlined share-action" data-share-action title="创建分享" onclick="${jsAttr(`event.stopPropagation();createShareForPath(${jsString(currentPath ? currentPath + '/' + name : name)})`)}"><span class="material-icons-round">ios_share</span> 创建分享</button>
+        <button class="btn-outlined share-copy-action" data-share-copy title="复制直链" onclick="${jsAttr(`event.stopPropagation();copyShareOrDirectLink(${jsString(currentPath ? currentPath + '/' + name : name)})`)}"><span class="material-icons-round">link</span> 复制直链</button>
         <button class="icon-btn" title="更多" onclick="${jsAttr(`event.stopPropagation();showCtxMenu(event, ${jsString(name)})`)}">
           <span class="material-icons-round">more_vert</span>
         </button>
@@ -3269,16 +3401,16 @@ function renderDrivePage(folders, files, currentPath, siteTitle, cloudIconUrl = 
     const { icon, color } = getFileIcon(file.name);
     const path = currentPath ? currentPath + '/' + file.name : file.name;
     const size = Number(file.size) || 0;
-    return `<tr data-name="${escapeAttr(file.name)}" data-size="${size}" data-date="${escapeAttr(file.uploaded || '')}" onclick="${jsAttr(`handleFileClick(event, ${jsString(file.name)})`)}">
+    return `<tr data-name="${escapeAttr(file.name)}" data-share-path="${escapeAttr(path)}" data-size="${size}" data-date="${escapeAttr(file.uploaded || '')}" onclick="${jsAttr(`handleFileClick(event, ${jsString(file.name)})`)}">
       <td><div class="file-row-icon">
         <span class="material-icons-round" style="color:${color};font-size:22px">${icon}</span>
-        <span class="file-row-name">${escapeHtml(file.name)}</span>
+        <span class="file-row-name-wrap"><span class="file-row-name">${escapeHtml(file.name)}</span><span class="share-status" data-share-status>未分享</span></span>
       </div></td>
       <td class="file-row-meta">${formatSize(size)}</td>
       <td class="file-row-meta">${formatDate(file.uploaded)}</td>
       <td><div class="file-row-actions">
-        <button class="btn-outlined" title="分享设置" onclick="${jsAttr(`event.stopPropagation();createShareForPath(${jsString(path)})`)}"><span class="material-icons-round">ios_share</span> 分享设置</button>
-        <button class="btn-outlined" title="复制链接" onclick="${jsAttr(`event.stopPropagation();copyDirectLink(${jsString(path)})`)}"><span class="material-icons-round">link</span> 复制链接</button>
+        <button class="btn-outlined share-action" data-share-action title="创建分享" onclick="${jsAttr(`event.stopPropagation();createShareForPath(${jsString(path)})`)}"><span class="material-icons-round">ios_share</span> 创建分享</button>
+        <button class="btn-outlined share-copy-action" data-share-copy title="复制直链" onclick="${jsAttr(`event.stopPropagation();copyShareOrDirectLink(${jsString(path)})`)}"><span class="material-icons-round">link</span> 复制直链</button>
         <button class="icon-btn" title="下载" onclick="${jsAttr(`event.stopPropagation();startDownload(${jsString(path)}, ${size})`)}">
           <span class="material-icons-round">download</span>
         </button>
@@ -3299,21 +3431,11 @@ function renderDrivePage(folders, files, currentPath, siteTitle, cloudIconUrl = 
   </a>
   <div class="app-bar-spacer"></div>
     <div class="app-bar-actions">
-    <button class="icon-btn" id="darkModeToggle" title="夜间模式" onclick="toggleDarkMode(event)">
-      <span class="material-icons-round">dark_mode</span>
-    </button>
-    <button class="icon-btn" title="存储节点" onclick="openStorageNodes()">
-      <span class="material-icons-round">hub</span>
-    </button>
-    <button class="icon-btn" title="分享管理" onclick="openShareManager()">
-      <span class="material-icons-round">ios_share</span>
-    </button>
-    <button class="icon-btn" title="刷新" onclick="location.reload()">
-      <span class="material-icons-round">refresh</span>
-    </button>
-    <button class="icon-btn" title="退出登录" onclick="logout()">
-      <span class="material-icons-round">logout</span>
-    </button>
+    <button class="btn-outlined top-action" onclick="openUpload()"><span class="material-icons-round">upload</span><span class="top-action-label">上传</span></button>
+    <button class="btn-outlined top-action" onclick="location.href='/shares'"><span class="material-icons-round">ios_share</span><span class="top-action-label">分享</span></button>
+    <button class="btn-outlined top-action" id="darkModeToggle" title="切换深色或浅色主题" onclick="toggleDarkMode(event)"><span class="material-icons-round">dark_mode</span><span class="top-action-label">主题</span></button>
+    <button class="btn-outlined top-action" title="刷新文件列表" onclick="location.reload()"><span class="material-icons-round">refresh</span><span class="top-action-label">刷新</span></button>
+    <button class="btn-outlined top-action" title="退出登录" onclick="logout()"><span class="material-icons-round">logout</span><span class="top-action-label">退出</span></button>
   </div>
 </header>
 
@@ -3321,7 +3443,7 @@ function renderDrivePage(folders, files, currentPath, siteTitle, cloudIconUrl = 
   <nav class="sidebar">
         <div class="sidebar-section">
       <a class="sidebar-item active" href="/">
-        <span class="material-icons-round">cloud</span> 我的云盘
+        <span class="material-icons-round">cloud</span> 文件管理
       </a>
       <button class="sidebar-item" onclick="openShareManager()">
         <span class="material-icons-round">ios_share</span> 分享管理
@@ -3336,23 +3458,26 @@ function renderDrivePage(folders, files, currentPath, siteTitle, cloudIconUrl = 
       <a class="sidebar-item" href="/settings">
         <span class="material-icons-round">settings</span> 系统设置
       </a>
-      <button class="sidebar-item" onclick="openStorageNodes()">
-        <span class="material-icons-round">hub</span> 存储节点
-      </button>
+
       <a class="sidebar-item" href="/guide">
         <span class="material-icons-round">help_outline</span> 使用指南
       </a>
     </div>
-    <button class="storage-info" id="storageInfo" onclick="toggleStorageDetails()" title="查看容量明细">
-      <div class="storage-text">
-        <span>${files.length} 个文件，${folders.length} 个文件夹</span>
-      </div>
-      <div class="storage-bar">
-        <div class="storage-fill" id="storageFill" style="width:0%"></div>
-      </div>
-      <div class="storage-text" id="storageText">计算中...</div>
-      <div class="storage-details" id="storageDetails"></div>
-    </button>
+    <div class="sidebar-bottom">
+      <button class="sidebar-item storage-node-shortcut" onclick="openStorageNodes()">
+        <span class="material-icons-round">hub</span> 存储节点
+      </button>
+      <button class="storage-info" id="storageInfo" onclick="toggleStorageDetails()" title="查看容量明细">
+        <div class="storage-text">
+          <span>${files.length} 个文件，${folders.length} 个文件夹</span>
+        </div>
+        <div class="storage-bar">
+          <div class="storage-fill" id="storageFill" style="width:0%"></div>
+        </div>
+        <div class="storage-text" id="storageText">计算中...</div>
+        <div class="storage-details" id="storageDetails"></div>
+      </button>
+    </div>
   </nav>
 
   <main class="main">
@@ -3364,6 +3489,9 @@ function renderDrivePage(folders, files, currentPath, siteTitle, cloudIconUrl = 
       </button>
       <button class="btn-outlined" onclick="openNewFolder()">
         <span class="material-icons-round">create_new_folder</span> 新建文件夹
+      </button>
+      <button class="btn-outlined" id="selectionModeBtn" onclick="toggleSelectionMode()">
+        <span class="material-icons-round">content_copy</span> 选择
       </button>
       <div class="toolbar-right">
         <div class="view-toggle">
@@ -3481,10 +3609,11 @@ function renderDrivePage(folders, files, currentPath, siteTitle, cloudIconUrl = 
       </div>
       <input type="file" id="fileInput" multiple style="display:none" onchange="handleFileInput(event)">
       <div class="progress-list" id="progressList"></div>
+      <div class="upload-modal-status" id="uploadModalStatus" role="status">可拖放文件到上方区域，或选择文件上传。</div>
     </div>
     <div class="modal-footer">
-      <button class="btn-outlined" onclick="closeUpload()">关闭</button>
-      <button class="fab" style="box-shadow:none" onclick="document.getElementById('fileInput').click()">
+      <button class="btn-outlined" id="uploadCloseBtn" onclick="closeUpload()">关闭</button>
+      <button class="fab" id="uploadSelectBtn" style="box-shadow:none" onclick="document.getElementById('fileInput').click()">
         <span class="material-icons-round">folder_open</span> 选择文件
       </button>
     </div>
@@ -6832,6 +6961,10 @@ export default {
       return htmlResponse(renderSettingsPage(publicAppSettings(appConfig), siteTitle));
     }
 
+    if (path === '/shares' && request.method === 'GET') {
+      if (!await isAuthenticated(request, env)) return Response.redirect(new URL('/login', url).toString(), 302);
+      return htmlResponse(renderShareManagerPage(siteTitle, cloudIconUrl));
+    }
     if (path === '/guide' && request.method === 'GET') {
       if (!await isAuthenticated(request, env)) return Response.redirect(new URL('/login', url).toString(), 302);
       return htmlResponse(renderGuidePage(siteTitle));
