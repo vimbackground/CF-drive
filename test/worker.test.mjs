@@ -70,27 +70,37 @@ test('owner-signed setup stores configuration in D1 and enables password login',
     body: JSON.stringify({
       nonce: challenge.nonce,
       signature: Buffer.from(signature).toString('base64url'),
-      password: 'a-long-initial-admin-password',
+      password: 'admin123',
       siteTitle: 'My CF-drive'
     })
   }), env, ctx);
   assert.equal(claim.status, 200);
   assert.equal((await claim.json()).ok, true);
 
-  const login = await worker.fetch(apiRequest('POST', '/api/login', { password: 'a-long-initial-admin-password' }), env, ctx);
+  const login = await worker.fetch(apiRequest('POST', '/api/login', { password: 'admin123' }), env, ctx);
   assert.equal(login.status, 200);
   const cookie = login.headers.get('Set-Cookie').split(';', 1)[0];
+  const drive = await worker.fetch(new Request('https://drive.example/', { headers: { Cookie: cookie } }), env, ctx);
+  const driveHtml = await drive.text();
+  assert.equal(drive.status, 200);
+  assert.doesNotMatch(driveHtml, /jsdelivr/);
+  assert.match(driveHtml, /系统设置/);
+  assert.match(driveHtml, /使用指南/);
+  assert.match(driveHtml, /viewMode = localStorage\.getItem\('viewMode'\) \|\| 'list'/);
+  const guide = await worker.fetch(new Request('https://drive.example/guide', { headers: { Cookie: cookie } }), env, ctx);
+  assert.equal(guide.status, 200);
+  assert.match(await guide.text(), /WebDAV 使用/);
   const settings = await worker.fetch(apiRequest('GET', '/api/settings', undefined, cookie), env, ctx);
   assert.equal(settings.status, 200);
   assert.equal((await settings.json()).settings.siteTitle, 'My CF-drive');
 
   const updated = await worker.fetch(apiRequest('PUT', '/api/settings', {
     siteTitle: 'Configured CF-drive',
-    webdav: { enabled: true, username: 'configured-dav', password: 'a-long-webdav-password', maxUploadBytes: 104857600 }
+    webdav: { enabled: true, username: 'configured-dav', password: 'davpass8', maxUploadBytes: 104857600 }
   }, cookie), env, ctx);
   assert.equal(updated.status, 200);
   const dav = await worker.fetch(new Request('https://drive.example/dav/', {
-    method: 'OPTIONS', headers: { Authorization: `Basic ${btoa('configured-dav:a-long-webdav-password')}` }
+    method: 'OPTIONS', headers: { Authorization: `Basic ${btoa('configured-dav:davpass8')}` }
   }), env, ctx);
   assert.equal(dav.status, 204);
 });

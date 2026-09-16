@@ -25,7 +25,7 @@ npm.cmd run verify
 
 ## 4. 首次认领实例
 
-无需在 Cloudflare **Variables and Secrets** 配置应用密码或 Token。首次部署创建 Worker 后，打开 `https://<你的域名>/setup`，选择本地 `.cf-drive/bootstrap-owner-private.jwk`，设置至少 12 位的管理员密码并完成认领。
+无需在 Cloudflare **Variables and Secrets** 配置应用密码或 Token。首次部署创建 Worker 后，打开 `https://<你的域名>/setup`，选择本地 `.cf-drive/bootstrap-owner-private.jwk`，设置至少 8 位的管理员密码并完成认领。
 
 认领成功后，访问 `/settings` 管理站点标题、WebDAV、管理员密码和密钥轮换。管理员与 WebDAV 密码只存 PBKDF2 校验记录；分享、会话和存储节点的随机密钥由 Worker 生成并保存在 D1，不会回显。
 
@@ -53,7 +53,7 @@ npm.cmd run verify
 仅在完成上节验收后：
 
 1. 登录实例并打开 `/settings`。
-2. 设置专用 WebDAV 用户名和至少 12 位的独立密码，勾选启用 WebDAV。
+2. 设置专用 WebDAV 用户名和至少 8 位的独立密码，勾选启用 WebDAV。
 3. 可按需调整最大上传字节数，默认 100 MiB。
 4. 用目标客户端在隔离目录测试 `PROPFIND`、`GET`、Range GET、`PUT`、`MKCOL`、`COPY`、`MOVE`、`DELETE`、`LOCK`、`UNLOCK`。
 

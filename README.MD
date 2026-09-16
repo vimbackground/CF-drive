@@ -1,5 +1,9 @@
 # CF-drive
 
+## 致谢
+
+本项目的功能方向受到原项目 [HandsomeMJZ/R2-Cloud-Drive](https://github.com/HandsomeMJZ/R2-Cloud-Drive) 的启发，感谢原作者及贡献者。
+
 基于 Cloudflare Workers、R2 与 D1 的单实例网盘。项目以全新部署为目标：R2 保存文件对象，D1 保存虚拟目录、文件映射、分享、上传会话、锁和管理状态。
 
 当前发布版本：`2.0.0`。

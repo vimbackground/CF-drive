@@ -121,7 +121,7 @@ function renderHTML(content, title = 'CF-drive') {
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>${escapeHtml(title)}</title>
-<link href="https://cdn.jsdelivr.net/npm/material-icons@1.13.12/iconfont/round.css" rel="stylesheet">
+
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -206,9 +206,9 @@ function renderHTML(content, title = 'CF-drive') {
     color: white; font-size: 20px;
     overflow: hidden; flex-shrink: 0;
   }
-  /* Material Icons Round：jsDelivr CDN 提供 @font-face 和基础样式，此处增强对齐和尺寸稳定性 */
+  /* 图标使用浏览器自带符号字形，不依赖境外 CDN。 */
   .material-icons-round {
-    font-family: "Material Icons Round";
+    font-family: "Segoe UI Symbol", "Apple Symbols", "Noto Sans Symbols 2", sans-serif;
     font-weight: normal;
     font-style: normal;
     font-size: 24px;
@@ -227,7 +227,6 @@ function renderHTML(content, title = 'CF-drive') {
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
     -moz-osx-font-smoothing: grayscale;
-    font-feature-settings: "liga";
   }
   .logo-icon .material-icons-round { font-size: inherit; }
   .logo-icon-custom { background: transparent; }
@@ -406,6 +405,8 @@ function renderHTML(content, title = 'CF-drive') {
     opacity: 0; transition: opacity .15s;
   }
   .file-card:hover .file-card-actions { opacity: 1; }
+  .file-card-primary-actions { display: flex; gap: 6px; margin-top: auto; }
+  .file-card-primary-actions .btn-outlined { flex: 1; min-width: 0; height: 32px; padding: 0 8px; font-size: 12px; }
 
   /* ── File List (Table) ── */
   .file-list { width: 100%; border-collapse: collapse; }
@@ -428,8 +429,8 @@ function renderHTML(content, title = 'CF-drive') {
   }
   .file-row-name:hover { color: var(--primary); text-decoration: underline; }
   .file-row-meta { font-size: 13px; color: var(--on-surface-variant); white-space: nowrap; }
-  .file-row-actions { opacity: 0; display: flex; gap: 4px; }
-  tr:hover .file-row-actions { opacity: 1; }
+  .file-row-actions { display: flex; gap: 4px; }
+  .file-row-actions .btn-outlined { height: 32px; padding: 0 8px; font-size: 12px; white-space: nowrap; }
 
   /* ── Empty State ── */
   .empty-state {
@@ -1029,8 +1030,38 @@ ${content}
 </div>
 
 <script>
+// 图标符号在 Worker 页面中本地转换，避免依赖 jsDelivr 等第三方字体 CDN。
+const LOCAL_ICON_GLYPHS = Object.freeze({
+  add: '＋', arrow_back: '←', article: '▤', audio_file: '♪', broken_image: '▧',
+  check: '✓', check_circle: '●', cleaning_services: '⌁', close: '×', cloud: '☁',
+  cloud_upload: '⇧', code: '‹›', content_copy: '⧉', content_cut: '✂', content_paste: '▣',
+  create_new_folder: '▰', dark_mode: '◐', delete_forever: '⊗', delete_outline: '⌫',
+  description: '▤', download: '⇩', downloading: '⇩', drive_file_rename_outline: '✎',
+  edit: '✎', folder: '▰', folder_open: '▱', folder_zip: '▰', grid_view: '▦',
+  help_outline: '?', hourglass_empty: '⌛', hub: '◉', image: '▧', insert_drive_file: '▤',
+  ios_share: '↗', link: '↗', link_off: '⊘', logout: '⇥', more_vert: '⋮', movie: '▶',
+  network_check: '◉', refresh: '↻', save: '▣', search: '⌕', settings: '⚙', slideshow: '▻',
+  sync: '↻', table_chart: '▦', unfold_more: '↕', upload: '⇧', upload_file: '⇧',
+  view_list: '☷', visibility: '◉'
+});
+function replaceRemoteIconGlyphs(root = document) {
+  const icons = [];
+  if (root?.matches?.('.material-icons-round')) icons.push(root);
+  root?.querySelectorAll?.('.material-icons-round').forEach(icon => icons.push(icon));
+  icons.forEach(icon => {
+    const name = icon.dataset.iconName || icon.textContent.trim();
+    const glyph = LOCAL_ICON_GLYPHS[name];
+    if (!glyph) return;
+    icon.dataset.iconName = name;
+    icon.textContent = glyph;
+    icon.setAttribute('aria-hidden', 'true');
+  });
+}
+replaceRemoteIconGlyphs();
+new MutationObserver(records => records.forEach(record => record.addedNodes.forEach(node => replaceRemoteIconGlyphs(node)))).observe(document.body, { childList: true, subtree: true });
+
 // ── State ──
-let viewMode = localStorage.getItem('viewMode') || 'grid';
+let viewMode = localStorage.getItem('viewMode') || 'list';
 let selectedFiles = new Set();
 let ctxTarget = null;
 let currentPath = '';
@@ -1922,9 +1953,11 @@ function ctxRename() {
 }
 function ctxCopyLink() {
   if (!ctxTarget) return;
-  const path = currentPath ? currentPath + '/' + ctxTarget : ctxTarget;
+  copyDirectLink(currentPath ? currentPath + '/' + ctxTarget : ctxTarget);
+}
+function copyDirectLink(path) {
   const url = location.origin + '/api/download?path=' + encodeURIComponent(path);
-  navigator.clipboard.writeText(url).then(() => showSnackbar('链接已复制'));
+  navigator.clipboard.writeText(url).then(() => showSnackbar('链接已复制')).catch(() => window.prompt('请手动复制链接', url));
 }
 let shareTargetPathValue = '';
 let createdShareLink = '';
@@ -2826,14 +2859,17 @@ document.addEventListener('DOMContentLoaded', () => {
 }
 
 function renderSetupPage(siteTitle = 'CF-drive') {
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>初始化 ${escapeHtml(siteTitle)}</title><style>body{font-family:system-ui,sans-serif;max-width:520px;margin:10vh auto;padding:24px;background:#f6f8fa;color:#1f2328}main{background:#fff;padding:28px;border-radius:12px;box-shadow:0 2px 12px #0001}label{display:block;margin:16px 0 6px}input{box-sizing:border-box;width:100%;padding:10px}button{margin-top:20px;padding:10px 16px}#status{white-space:pre-wrap;color:#b42318}</style></head><body><main><h1>初始化 ${escapeHtml(siteTitle)}</h1><p>请选择部署所有者私钥文件，并设置管理员密码。私钥只在浏览器中用于签名，不会上传或保存。</p><label>所有者私钥（JWK JSON）<input id="key" type="file" accept="application/json"></label><label>管理员密码（至少 12 位）<input id="password" type="password" minlength="12" autocomplete="new-password"></label><label>站点标题（可选）<input id="title" value="${escapeAttr(siteTitle)}" maxlength="100"></label><button id="claim">认领并初始化</button><p id="status" role="alert"></p></main><script>const b64u=b=>{let s='';new Uint8Array(b).forEach(x=>s+=String.fromCharCode(x));return btoa(s).replace(/\\+/g,'-').replace(/\\//g,'_').replace(/=+$/,'')};document.getElementById('claim').onclick=async()=>{const status=document.getElementById('status');try{const file=document.getElementById('key').files[0];const password=document.getElementById('password').value;if(!file)throw Error('请选择所有者私钥文件');if(password.length<12)throw Error('管理员密码至少需要 12 位');const key=await crypto.subtle.importKey('jwk',JSON.parse(await file.text()),{name:'ECDSA',namedCurve:'P-256'},false,['sign']);const challenge=await fetch('/api/setup/challenge',{cache:'no-store'}).then(async r=>{if(!r.ok)throw Error(await r.text());return r.json()});const signature=await crypto.subtle.sign({name:'ECDSA',hash:'SHA-256'},key,new TextEncoder().encode(challenge.message));const response=await fetch('/api/setup/claim',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({nonce:challenge.nonce,signature:b64u(signature),password,siteTitle:document.getElementById('title').value})});const result=await response.json();if(!response.ok||!result.ok)throw Error(result.error||'初始化失败');location.href='/login'}catch(error){status.textContent=error.message||'初始化失败'}};</script></body></html>`;
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>初始化 ${escapeHtml(siteTitle)}</title><style>body{font-family:system-ui,sans-serif;max-width:520px;margin:10vh auto;padding:24px;background:#f6f8fa;color:#1f2328}main{background:#fff;padding:28px;border-radius:12px;box-shadow:0 2px 12px #0001}label{display:block;margin:16px 0 6px}input{box-sizing:border-box;width:100%;padding:10px}button{margin-top:20px;padding:10px 16px}#status{white-space:pre-wrap;color:#b42318}</style></head><body><main><h1>初始化 ${escapeHtml(siteTitle)}</h1><p>请选择部署所有者私钥文件，并设置管理员密码。私钥只在浏览器中用于签名，不会上传或保存。</p><label>所有者私钥（JWK JSON）<input id="key" type="file" accept="application/json"></label><label>管理员密码（至少 8 位）<input id="password" type="password" minlength="8" autocomplete="new-password"></label><label>站点标题（可选）<input id="title" value="${escapeAttr(siteTitle)}" maxlength="100"></label><button id="claim">认领并初始化</button><p id="status" role="alert"></p></main><script>const b64u=b=>{let s='';new Uint8Array(b).forEach(x=>s+=String.fromCharCode(x));return btoa(s).replace(/\\+/g,'-').replace(/\\//g,'_').replace(/=+$/,'')};document.getElementById('claim').onclick=async()=>{const status=document.getElementById('status');try{const file=document.getElementById('key').files[0];const password=document.getElementById('password').value;if(!file)throw Error('请选择所有者私钥文件');if(password.length<8)throw Error('管理员密码至少需要 8 位');const key=await crypto.subtle.importKey('jwk',JSON.parse(await file.text()),{name:'ECDSA',namedCurve:'P-256'},false,['sign']);const challenge=await fetch('/api/setup/challenge',{cache:'no-store'}).then(async r=>{if(!r.ok)throw Error(await r.text());return r.json()});const signature=await crypto.subtle.sign({name:'ECDSA',hash:'SHA-256'},key,new TextEncoder().encode(challenge.message));const response=await fetch('/api/setup/claim',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({nonce:challenge.nonce,signature:b64u(signature),password,siteTitle:document.getElementById('title').value})});const result=await response.json();if(!response.ok||!result.ok)throw Error(result.error||'初始化失败');location.href='/login'}catch(error){status.textContent=error.message||'初始化失败'}};</script></body></html>`;
 }
 
 function renderSettingsPage(settings, siteTitle = 'CF-drive') {
   const safe = JSON.stringify(settings).replace(/</g, '\\u003c');
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>设置 - ${escapeHtml(siteTitle)}</title><style>body{font-family:system-ui,sans-serif;max-width:680px;margin:5vh auto;padding:24px;background:#f6f8fa}main{background:#fff;padding:28px;border-radius:12px}label{display:block;margin:14px 0 6px}input{box-sizing:border-box;width:100%;padding:10px}button{margin:18px 8px 0 0;padding:10px 16px}small{color:#57606a}#status{white-space:pre-wrap}</style></head><body><main><h1>实例设置</h1><p><a href="/">返回网盘</a></p><label>站点标题<input id="siteTitle" maxlength="100"></label><label>WebDAV 用户名<input id="webdavUsername" autocomplete="username"></label><label>WebDAV 新密码 <small>留空保持不变</small><input id="webdavPassword" type="password" minlength="12" autocomplete="new-password"></label><label><input id="webdavEnabled" type="checkbox" style="width:auto"> 启用 WebDAV</label><label>WebDAV 最大上传字节数<input id="maxUploadBytes" type="number" min="1"></label><label>新的管理员密码 <small>留空保持不变</small><input id="adminPassword" type="password" minlength="12" autocomplete="new-password"></label><label><input id="rotateShareSecret" type="checkbox" style="width:auto"> 轮换分享签名密钥（会使现有分享授权 Cookie 失效）</label><button id="save">保存</button><p id="status" role="alert"></p></main><script>const initial=${safe};for(const [id,value] of Object.entries({siteTitle:initial.siteTitle,webdavUsername:initial.webdav.username,maxUploadBytes:initial.webdav.maxUploadBytes}))document.getElementById(id).value=value;document.getElementById('webdavEnabled').checked=initial.webdav.enabled;document.getElementById('save').onclick=async()=>{const status=document.getElementById('status');const body={siteTitle:document.getElementById('siteTitle').value,webdav:{enabled:document.getElementById('webdavEnabled').checked,username:document.getElementById('webdavUsername').value,maxUploadBytes:Number(document.getElementById('maxUploadBytes').value),password:document.getElementById('webdavPassword').value},adminPassword:document.getElementById('adminPassword').value,rotateShareSecret:document.getElementById('rotateShareSecret').checked};const r=await fetch('/api/settings',{method:'PUT',headers:{'Content-Type':'application/json','X-R2Drive-CSRF':'same-origin'},body:JSON.stringify(body)});const data=await r.json();status.textContent=data.ok?'已保存。':'保存失败：'+(data.error||r.status)};</script></body></html>`;
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>设置 - ${escapeHtml(siteTitle)}</title><style>body{font-family:system-ui,sans-serif;max-width:680px;margin:5vh auto;padding:24px;background:#f6f8fa}main{background:#fff;padding:28px;border-radius:12px}label{display:block;margin:14px 0 6px}input{box-sizing:border-box;width:100%;padding:10px}button{margin:18px 8px 0 0;padding:10px 16px}small{color:#57606a}#status{white-space:pre-wrap}</style></head><body><main><h1>实例设置</h1><p><a href="/">返回网盘</a> · <a href="/guide">使用指南</a></p><label>站点标题<input id="siteTitle" maxlength="100"></label><label>WebDAV 用户名<input id="webdavUsername" autocomplete="username"></label><label>WebDAV 新密码 <small>留空保持不变；至少 8 位</small><input id="webdavPassword" type="password" minlength="8" autocomplete="new-password"></label><label><input id="webdavEnabled" type="checkbox" style="width:auto"> 启用 WebDAV</label><label>WebDAV 最大上传字节数<input id="maxUploadBytes" type="number" min="1"></label><label>新的管理员密码 <small>留空保持不变；至少 8 位</small><input id="adminPassword" type="password" minlength="8" autocomplete="new-password"></label><label><input id="rotateShareSecret" type="checkbox" style="width:auto"> 轮换分享签名密钥（会使现有分享授权 Cookie 失效）</label><button id="save">保存</button><p id="status" role="alert"></p></main><script>const initial=${safe};for(const [id,value] of Object.entries({siteTitle:initial.siteTitle,webdavUsername:initial.webdav.username,maxUploadBytes:initial.webdav.maxUploadBytes}))document.getElementById(id).value=value;document.getElementById('webdavEnabled').checked=initial.webdav.enabled;document.getElementById('save').onclick=async()=>{const status=document.getElementById('status');const body={siteTitle:document.getElementById('siteTitle').value,webdav:{enabled:document.getElementById('webdavEnabled').checked,username:document.getElementById('webdavUsername').value,maxUploadBytes:Number(document.getElementById('maxUploadBytes').value),password:document.getElementById('webdavPassword').value},adminPassword:document.getElementById('adminPassword').value,rotateShareSecret:document.getElementById('rotateShareSecret').checked};const r=await fetch('/api/settings',{method:'PUT',headers:{'Content-Type':'application/json','X-R2Drive-CSRF':'same-origin'},body:JSON.stringify(body)});const data=await r.json();status.textContent=data.ok?'已保存。':'保存失败：'+(data.error||r.status)};</script></body></html>`;
 }
 
+function renderGuidePage(siteTitle = 'CF-drive') {
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>使用指南 - ${escapeHtml(siteTitle)}</title><style>body{font-family:system-ui,sans-serif;max-width:760px;margin:5vh auto;padding:24px;background:#f6f8fa;color:#1f2328}main{background:#fff;padding:28px;border-radius:12px;line-height:1.65}h1{margin-top:0}h2{margin:28px 0 8px;font-size:20px}ol{padding-left:22px}code{padding:2px 5px;background:#f1f3f5;border-radius:4px}a{color:#1557b0}</style></head><body><main><h1>使用指南</h1><p><a href="/">返回网盘</a> · <a href="/settings">系统设置</a></p><h2>后台设置</h2><ol><li>在“系统设置”中可修改站点标题、管理员密码，以及 WebDAV 的独立账号和密码。</li><li>管理员与 WebDAV 密码均至少 8 位；WebDAV 密码请勿复用管理员密码。</li><li>启用 WebDAV 前，请填好用户名和密码；保存后才会生效。</li></ol><h2>WebDAV 使用</h2><ol><li>服务器地址：<code>https://你的域名/dav/</code>。</li><li>在 Windows 资源管理器、macOS Finder 或支持 WebDAV 的客户端中添加该地址，并使用系统设置中的 WebDAV 凭据登录。</li><li>如需上传较大文件，请按客户端能力调整“WebDAV 最大上传字节数”。</li></ol><p>分享链接可在“分享管理”中编辑、刷新或撤销；文件和目录行也可直接打开分享设置。</p></main></body></html>`;
+}
 function renderLoginPage(error = '', siteTitle = 'CF-drive', cloudIconUrl = '', loginBackgroundUrl = '') {
   const bgUrl = String(loginBackgroundUrl || '').trim();
   const loginBg = bgUrl
@@ -3174,6 +3210,10 @@ function renderDrivePage(folders, files, currentPath, siteTitle, cloudIconUrl = 
           <span class="material-icons-round">more_vert</span>
         </button>
       </div>
+      <div class="file-card-primary-actions">
+        <button class="btn-outlined" title="分享设置" onclick="${jsAttr(`event.stopPropagation();createShareForPath(${jsString(currentPath ? currentPath + '/' + name : name)})`)}"><span class="material-icons-round">ios_share</span> 分享设置</button>
+        <button class="btn-outlined" title="复制链接" onclick="${jsAttr(`event.stopPropagation();copyDirectLink(${jsString(currentPath ? currentPath + '/' + name : name)})`)}"><span class="material-icons-round">link</span> 复制链接</button>
+      </div>
     </div>`;
   };
 
@@ -3199,6 +3239,10 @@ function renderDrivePage(folders, files, currentPath, siteTitle, cloudIconUrl = 
           <span class="material-icons-round">more_vert</span>
         </button>
       </div>
+      <div class="file-card-primary-actions">
+        <button class="btn-outlined" title="分享设置" onclick="${jsAttr(`event.stopPropagation();createShareForPath(${jsString(path)})`)}"><span class="material-icons-round">ios_share</span> 分享设置</button>
+        <button class="btn-outlined" title="复制链接" onclick="${jsAttr(`event.stopPropagation();copyDirectLink(${jsString(path)})`)}"><span class="material-icons-round">link</span> 复制链接</button>
+      </div>
     </div>`;
   };
 
@@ -3212,6 +3256,8 @@ function renderDrivePage(folders, files, currentPath, siteTitle, cloudIconUrl = 
       <td class="file-row-meta">—</td>
       <td class="file-row-meta">—</td>
       <td><div class="file-row-actions">
+        <button class="btn-outlined" title="分享设置" onclick="${jsAttr(`event.stopPropagation();createShareForPath(${jsString(currentPath ? currentPath + '/' + name : name)})`)}"><span class="material-icons-round">ios_share</span> 分享设置</button>
+        <button class="btn-outlined" title="复制链接" onclick="${jsAttr(`event.stopPropagation();copyDirectLink(${jsString(currentPath ? currentPath + '/' + name : name)})`)}"><span class="material-icons-round">link</span> 复制链接</button>
         <button class="icon-btn" title="更多" onclick="${jsAttr(`event.stopPropagation();showCtxMenu(event, ${jsString(name)})`)}">
           <span class="material-icons-round">more_vert</span>
         </button>
@@ -3231,6 +3277,8 @@ function renderDrivePage(folders, files, currentPath, siteTitle, cloudIconUrl = 
       <td class="file-row-meta">${formatSize(size)}</td>
       <td class="file-row-meta">${formatDate(file.uploaded)}</td>
       <td><div class="file-row-actions">
+        <button class="btn-outlined" title="分享设置" onclick="${jsAttr(`event.stopPropagation();createShareForPath(${jsString(path)})`)}"><span class="material-icons-round">ios_share</span> 分享设置</button>
+        <button class="btn-outlined" title="复制链接" onclick="${jsAttr(`event.stopPropagation();copyDirectLink(${jsString(path)})`)}"><span class="material-icons-round">link</span> 复制链接</button>
         <button class="icon-btn" title="下载" onclick="${jsAttr(`event.stopPropagation();startDownload(${jsString(path)}, ${size})`)}">
           <span class="material-icons-round">download</span>
         </button>
@@ -3275,24 +3323,24 @@ function renderDrivePage(folders, files, currentPath, siteTitle, cloudIconUrl = 
       <a class="sidebar-item active" href="/">
         <span class="material-icons-round">cloud</span> 我的云盘
       </a>
-      <button class="sidebar-item" onclick="openUpload()">
-        <span class="material-icons-round">cloud_upload</span> 上传文件
-      </button>
-      <button class="sidebar-item" onclick="openStorageNodes()">
-        <span class="material-icons-round">hub</span> 存储节点
-      </button>
       <button class="sidebar-item" onclick="openShareManager()">
         <span class="material-icons-round">ios_share</span> 分享管理
+      </button>
+      <button class="sidebar-item" onclick="openUpload()">
+        <span class="material-icons-round">cloud_upload</span> 上传文件
       </button>
     </div>
     <div class="sidebar-divider"></div>
     <div class="sidebar-section">
-      <div class="sidebar-label">快速访问</div>
-      <a class="sidebar-item" href="/?path=">
-        <span class="material-icons-round">home</span> 根目录
+      <div class="sidebar-label">设置</div>
+      <a class="sidebar-item" href="/settings">
+        <span class="material-icons-round">settings</span> 系统设置
       </a>
-            <a class="sidebar-item" href="/?path=shared">
-        <span class="material-icons-round">folder_shared</span> 共享文件夹
+      <button class="sidebar-item" onclick="openStorageNodes()">
+        <span class="material-icons-round">hub</span> 存储节点
+      </button>
+      <a class="sidebar-item" href="/guide">
+        <span class="material-icons-round">help_outline</span> 使用指南
       </a>
     </div>
     <button class="storage-info" id="storageInfo" onclick="toggleStorageDetails()" title="查看容量明细">
@@ -3380,20 +3428,20 @@ function renderDrivePage(folders, files, currentPath, siteTitle, cloudIconUrl = 
     </div>
     ` : `
     <!-- Grid View -->
-    <div id="fileGrid" class="file-grid">
+    <div id="fileGrid" class="file-grid" style="display:none">
       ${folders.map(renderFolderCard).join('')}
       ${files.map(renderFileCard).join('')}
     </div>
 
     <!-- List View -->
-    <div id="fileList" style="display:none">
+    <div id="fileList">
       <table class="file-list">
         <thead>
           <tr>
             <th onclick="sortTable('name')"><div class="th-inner">名称 <span class="material-icons-round" style="font-size:14px">unfold_more</span></div></th>
             <th onclick="sortTable('size')"><div class="th-inner">大小 <span class="material-icons-round" style="font-size:14px">unfold_more</span></div></th>
             <th onclick="sortTable('date')"><div class="th-inner">修改时间 <span class="material-icons-round" style="font-size:14px">unfold_more</span></div></th>
-            <th style="width:80px"></th>
+            <th style="width:270px">操作</th>
           </tr>
         </thead>
         <tbody>
@@ -4314,7 +4362,7 @@ async function verifyBootstrapClaim(env, body, origin) {
 
 async function createInitialAppConfig(body = {}) {
   const password = String(body.password || '');
-  if (password.length < 12) throw new Error('管理员密码至少需要 12 个字符');
+  if (password.length < 8) throw new Error('管理员密码至少需要 8 个字符');
   const adminPassword = await passwordRecord(password);
   return {
     version: 1,
@@ -6784,6 +6832,11 @@ export default {
       return htmlResponse(renderSettingsPage(publicAppSettings(appConfig), siteTitle));
     }
 
+    if (path === '/guide' && request.method === 'GET') {
+      if (!await isAuthenticated(request, env)) return Response.redirect(new URL('/login', url).toString(), 302);
+      return htmlResponse(renderGuidePage(siteTitle));
+    }
+
     if (path === '/api/settings' && request.method === 'GET') {
       if (!await isAuthenticated(request, env)) return new Response('Unauthorized', { status: 401 });
       if (!appConfig) return jsonResponse({ ok: false, error: 'legacy configuration migration required' }, 409);
@@ -6806,7 +6859,7 @@ export default {
       const nextPassword = String(webdav.password || '');
       next.webdav = { ...next.webdav, enabled, username, maxUploadBytes };
       if (nextPassword) {
-        if (nextPassword.length < 12) return jsonResponse({ ok: false, error: 'WebDAV 密码至少需要 12 个字符' }, 400);
+        if (nextPassword.length < 8) return jsonResponse({ ok: false, error: 'WebDAV 密码至少需要 8 个字符' }, 400);
         next.webdav.password = await passwordRecord(nextPassword);
       }
       if (enabled && (!username || !next.webdav.password?.hash)) {
@@ -6814,7 +6867,7 @@ export default {
       }
       const nextAdminPassword = String(body.adminPassword || '');
       if (nextAdminPassword) {
-        if (nextAdminPassword.length < 12) return jsonResponse({ ok: false, error: '管理员密码至少需要 12 个字符' }, 400);
+        if (nextAdminPassword.length < 8) return jsonResponse({ ok: false, error: '管理员密码至少需要 8 个字符' }, 400);
         next.adminPassword = await passwordRecord(nextAdminPassword);
         next.sessionSecret = randomSecret();
       }
