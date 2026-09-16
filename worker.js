@@ -3855,6 +3855,37 @@ function bytesToHex(bytes) {
   return [...new Uint8Array(bytes)].map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
+function concatByteArrays(parts) {
+  const length = parts.reduce((sum, value) => sum + value.byteLength, 0);
+  const result = new Uint8Array(length);
+  let offset = 0;
+  for (const value of parts) {
+    result.set(value, offset);
+    offset += value.byteLength;
+  }
+  return result;
+}
+
+async function treeHashFromLeaves(leaves) {
+  const header = new TextEncoder().encode(`cf-drive:sha256-tree:v1:${leaves.length}:`);
+  const digest = await crypto.subtle.digest('SHA-256', concatByteArrays([header, ...leaves]));
+  return 'sha256-tree-v1:' + bytesToHex(digest);
+}
+
+async function manifestPartTreeHash(env, R2, part) {
+  const size = Math.max(0, Number(part?.size || 0));
+  const leaves = [];
+  for (let offset = 0; offset < size; offset += STORAGE_JOB_VERIFY_CHUNK_BYTES) {
+    const length = Math.min(STORAGE_JOB_VERIFY_CHUNK_BYTES, size - offset);
+    const range = { start: offset, end: offset + length - 1, length };
+    const bytes = part.storageType === 'r2' || part.nodeId === MAIN_STORAGE_NODE_ID
+      ? await fetchR2PartBytes(R2, part, range)
+      : await fetchNodePartBytes(part, range);
+    leaves.push(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)));
+  }
+  return treeHashFromLeaves(leaves);
+}
+
 function constantTimeEqual(a = '', b = '') {
   const left = String(a || '');
   const right = String(b || '');
@@ -6285,6 +6316,17 @@ function isManifestFile(manifest) {
   return manifest && manifest.type === 'distributed-file' && Array.isArray(manifest.parts);
 }
 
+async function putManifestCas(R2, key, expectedEtag, manifest) {
+  if (!expectedEtag) throw new Error('manifest is missing an etag');
+  const result = await R2.put(key, JSON.stringify(manifest), {
+    onlyIf: { etagMatches: expectedEtag },
+    httpMetadata: { contentType: MANIFEST_CONTENT_TYPE },
+    customMetadata: { r2driveManifest: '1', r2driveSize: String(manifest.size) }
+  });
+  if (!result) throw new Error('manifest changed concurrently; retry the job');
+  return result;
+}
+
 function manifestPartReplicas(part) {
   if (Array.isArray(part?.replicas) && part.replicas.length) return part.replicas;
   // v1 fields remain the source of truth for old manifests.
@@ -6367,6 +6409,8 @@ async function createConsolidationJob(env, R2, nodeId) {
 }
 
 async function verifyConsolidatedPart(env, R2, node, sourceKey, targetKey, size) {
+  const sourceLeaves = [];
+  const targetLeaves = [];
   for (let offset = 0; offset < size; offset += STORAGE_JOB_VERIFY_CHUNK_BYTES) {
     const length = Math.min(STORAGE_JOB_VERIFY_CHUNK_BYTES, size - offset);
     const source = await fetchNodePartBytes({ nodeUrl: node.url, token: node.token, key: sourceKey }, { start: offset, end: offset + length - 1, length });
@@ -6375,7 +6419,12 @@ async function verifyConsolidatedPart(env, R2, node, sourceKey, targetKey, size)
       crypto.subtle.digest('SHA-256', source), crypto.subtle.digest('SHA-256', target)
     ]);
     if (!constantTimeEqual(bytesToHex(sourceDigest), bytesToHex(targetDigest))) throw new Error('source and target checksum differ');
+    sourceLeaves.push(new Uint8Array(sourceDigest));
+    targetLeaves.push(new Uint8Array(targetDigest));
   }
+  const [sourceHash, targetHash] = await Promise.all([treeHashFromLeaves(sourceLeaves), treeHashFromLeaves(targetLeaves)]);
+  if (!constantTimeEqual(sourceHash, targetHash)) throw new Error('source and target tree hash differ');
+  return sourceHash;
 }
 
 async function runConsolidationJob(env, R2, jobId) {
@@ -6415,16 +6464,21 @@ async function runConsolidationJob(env, R2, jobId) {
       await R2.put(targetKey, sourceResponse.body, { httpMetadata: { contentType: 'application/octet-stream' } });
       const targetMeta = await R2.head(targetKey);
       if (!targetMeta || Number(targetMeta.size) !== item.size) throw new Error('target part size mismatch');
-      await verifyConsolidatedPart(env, R2, node, item.sourceKey, targetKey, item.size);
+      const verifiedHash = await verifyConsolidatedPart(env, R2, node, item.sourceKey, targetKey, item.size);
+      if (part.hash && !constantTimeEqual(part.hash, verifiedHash)) throw new Error('source part does not match manifest hash');
       const replacement = { storageId: MAIN_STORAGE_NODE_ID, nodeId: MAIN_STORAGE_NODE_ID, storageType: 'r2', key: targetKey, nodeName: '主控账号', nodeUrl: '', state: 'healthy' };
       part.key = targetKey;
       part.storageType = 'r2';
       part.nodeId = MAIN_STORAGE_NODE_ID;
       part.nodeName = '主控账号';
       part.nodeUrl = '';
+      part.hash = verifiedHash;
       part.replicas = [replacement];
       manifest.generation = Math.max(1, Number(manifest.generation) || 1) + 1;
-      await R2.put(item.manifestKey, JSON.stringify(manifest), { httpMetadata: { contentType: MANIFEST_CONTENT_TYPE }, customMetadata: { r2driveManifest: '1', r2driveSize: String(manifest.size) } });
+      if (manifest.parts.every(value => /^sha256-tree-v1:[a-f0-9]{64}$/i.test(value.hash || ''))) {
+        manifest.contentHash = await treeHashFromLeaves(manifest.parts.map(value => hexToBytes(value.hash.slice('sha256-tree-v1:'.length))));
+      }
+      await putManifestCas(R2, item.manifestKey, object.etag, manifest);
       const deleted = await fetch(node.url.replace(/\/+$/, '') + '/api/node/part?key=' + encodeURIComponent(item.sourceKey), { method: 'DELETE', headers: getNodeAuthHeaders(node) });
       if (!deleted.ok) throw new Error('manifest switched but source cleanup failed');
       item.status = 'completed';
@@ -6441,6 +6495,90 @@ async function runConsolidationJob(env, R2, jobId) {
   job.updatedAt = new Date().toISOString();
   await saveStorageJobs(env, jobs);
   return job;
+}
+
+async function createManifestUpgradeJob(env, R2) {
+  const items = [];
+  let cursor;
+  do {
+    const listed = await R2.list({ cursor, limit: 1000, include: ['customMetadata'] });
+    for (const object of listed.objects || []) {
+      if (!hasManifestMetadata(object)) continue;
+      const manifest = await readManifestObject(await R2.get(object.key));
+      if (isManifestFile(manifest) && Number(manifest.version || 1) < MANIFEST_VERSION) {
+        items.push({ manifestKey: object.key, status: 'pending', error: '' });
+      }
+    }
+    cursor = listed.cursor;
+  } while (cursor);
+  const now = new Date().toISOString();
+  const job = {
+    id: crypto.randomUUID(), type: 'upgrade-manifest-v1', nodeId: '', status: items.length ? 'queued' : 'completed',
+    items, totalBytes: 0, completedBytes: 0, createdAt: now, updatedAt: now, error: ''
+  };
+  const jobs = await getStorageJobs(env);
+  jobs.push(job);
+  await saveStorageJobs(env, jobs);
+  return job;
+}
+
+async function runManifestUpgradeJob(env, R2, jobId) {
+  const jobs = await getStorageJobs(env);
+  const job = jobs.find(item => item.id === jobId && item.type === 'upgrade-manifest-v1');
+  if (!job) throw new Error('storage job not found');
+  if (['completed', 'paused', 'cancelled'].includes(job.status)) return job;
+  const item = (job.items || []).find(value => value.status === 'pending' || value.status === 'failed');
+  if (!item) { job.status = 'completed'; await saveStorageJobs(env, jobs); return job; }
+  job.status = 'copying';
+  item.status = 'copying';
+  try {
+    const object = await R2.get(item.manifestKey);
+    const manifest = await readManifestObject(object);
+    if (!isManifestFile(manifest)) throw new Error('manifest no longer exists');
+    if (Number(manifest.version || 1) >= MANIFEST_VERSION) {
+      item.status = 'completed';
+    } else {
+      const resolvedParts = await resolveManifestParts(manifest, env);
+      let offset = 0;
+      const parts = [];
+      for (const part of resolvedParts.sort((a, b) => a.partNumber - b.partNumber)) {
+        const hash = await manifestPartTreeHash(env, R2, part);
+        const replica = { storageId: part.nodeId, nodeId: part.nodeId, storageType: part.storageType, key: part.key, nodeName: part.nodeName || '', nodeUrl: part.nodeUrl || '', state: 'healthy' };
+        parts.push({ ...part, partId: crypto.randomUUID(), offset, hash, replicas: [replica] });
+        offset += Number(part.size || 0);
+      }
+      const upgraded = {
+        ...manifest,
+        version: MANIFEST_VERSION,
+        layoutVersion: 1,
+        mode: 'stripe',
+        generation: 1,
+        contentHash: await treeHashFromLeaves(parts.map(part => hexToBytes(part.hash.slice('sha256-tree-v1:'.length)))),
+        parts
+      };
+      await putManifestCas(R2, item.manifestKey, object?.etag, upgraded);
+      item.status = 'completed';
+      item.error = '';
+    }
+    if ((job.items || []).every(value => value.status === 'completed')) job.status = 'completed';
+  } catch (err) {
+    item.status = 'failed';
+    item.error = err?.message || 'manifest upgrade failed';
+    job.status = 'failed';
+    job.error = item.error;
+  }
+  job.updatedAt = new Date().toISOString();
+  await saveStorageJobs(env, jobs);
+  return job;
+}
+
+async function runStorageJob(env, R2, jobId) {
+  const jobs = await getStorageJobs(env);
+  const job = jobs.find(item => item.id === jobId);
+  if (!job) throw new Error('storage job not found');
+  if (job.type === 'consolidate-node') return runConsolidationJob(env, R2, jobId);
+  if (job.type === 'upgrade-manifest-v1') return runManifestUpgradeJob(env, R2, jobId);
+  throw new Error('unsupported storage job');
 }
 
 function manifestPartsSize(manifest) {
@@ -7678,10 +7816,19 @@ export default {
       }
     }
 
+    if (path === '/api/storage-manifests/upgrade' && request.method === 'POST') {
+      try {
+        const job = await createManifestUpgradeJob(env, R2);
+        return jsonResponse({ ok: true, job: publicStorageJob(job) }, 202);
+      } catch (err) {
+        return jsonResponse({ ok: false, error: err?.message || 'could not create manifest upgrade job' }, 409);
+      }
+    }
+
     const runJobMatch = /^\/api\/storage-jobs\/([^/]+)\/run$/.exec(path);
     if (runJobMatch && request.method === 'POST') {
       try {
-        const job = await runConsolidationJob(env, R2, runJobMatch[1]);
+        const job = await runStorageJob(env, R2, runJobMatch[1]);
         return jsonResponse({ ok: true, job: publicStorageJob(job) });
       } catch (err) {
         return jsonResponse({ ok: false, error: err?.message || 'could not run storage job' }, 409);
@@ -8249,23 +8396,16 @@ export default {
       if (policy.mode !== 'stripe') {
         return jsonResponse({ ok: false, error: 'selected storage policy is not available for new uploads' }, 409);
       }
-      const manifest = {
-        type: 'distributed-file',
-        version: MANIFEST_VERSION,
-        layoutVersion: policy.layoutVersion,
-        mode: 'stripe',
-        generation: 1,
-        path: session.path,
-        size: session.size,
-        contentType: session.contentType,
-        createdAt: session.createdAt,
-        completedAt: new Date().toISOString(),
-        parts: session.parts.map((part, index) => ({
+      let offset = 0;
+      const manifestParts = [];
+      for (const part of session.parts) {
+        const hash = await manifestPartTreeHash(env, R2, part);
+        manifestParts.push({
           partNumber: part.partNumber,
           partId: crypto.randomUUID(),
-          offset: session.parts.slice(0, index).reduce((sum, previous) => sum + Number(previous.size || 0), 0),
+          offset,
           size: part.size,
-          hash: null,
+          hash,
           key: part.key,
           storageType: part.storageType || 'node',
           nodeId: part.nodeId,
@@ -8280,7 +8420,22 @@ export default {
             nodeUrl: part.nodeUrl,
             state: 'healthy'
           }]
-        }))
+        });
+        offset += Number(part.size || 0);
+      }
+      const manifest = {
+        type: 'distributed-file',
+        version: MANIFEST_VERSION,
+        layoutVersion: policy.layoutVersion,
+        mode: 'stripe',
+        generation: 1,
+        contentHash: await treeHashFromLeaves(manifestParts.map(part => hexToBytes(part.hash.slice('sha256-tree-v1:'.length)))),
+        path: session.path,
+        size: session.size,
+        contentType: session.contentType,
+        createdAt: session.createdAt,
+        completedAt: new Date().toISOString(),
+        parts: manifestParts
       };
       const object = await R2.put(session.storageKey, JSON.stringify(manifest), {
         httpMetadata: { contentType: MANIFEST_CONTENT_TYPE },

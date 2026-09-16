@@ -191,8 +191,29 @@ test('distributed uploads write a v2 Stripe manifest while v1 remains readable',
   assert.equal(manifest.version, 2);
   assert.equal(manifest.mode, 'stripe');
   assert.equal(manifest.layoutVersion, 1);
+  assert.match(manifest.contentHash, /^sha256-tree-v1:[a-f0-9]{64}$/);
+  assert.match(manifest.parts[0].hash, /^sha256-tree-v1:[a-f0-9]{64}$/);
   assert.equal(manifest.parts[0].replicas.length, 1);
   assert.equal(manifest.parts[0].replicas[0].state, 'healthy');
+});
+
+test('v1 manifests upgrade through a persistent job without changing their data placement', async () => {
+  const ctx = { waitUntil() {} };
+  const instance = await initializedInstance('https://drive.example', 'controller-password', {}, ctx);
+  await instance.env.R2_BUCKET.put('legacy-part', new Uint8Array([4, 5, 6]), { httpMetadata: { contentType: 'application/octet-stream' } });
+  await instance.env.R2_BUCKET.put('legacy-manifest', JSON.stringify({
+    type: 'distributed-file', version: 1, path: 'archive/legacy.bin', size: 3,
+    parts: [{ partNumber: 1, size: 3, key: 'legacy-part', storageType: 'r2', nodeId: 'main' }]
+  }), { httpMetadata: { contentType: 'application/vnd.r2drive.manifest+json' }, customMetadata: { r2driveManifest: '1' } });
+  const created = await worker.fetch(apiRequest('POST', '/api/storage-manifests/upgrade', undefined, instance.cookie), instance.env, ctx);
+  assert.equal(created.status, 202);
+  const job = (await created.json()).job;
+  const ran = await worker.fetch(apiRequest('POST', '/api/storage-jobs/' + encodeURIComponent(job.id) + '/run', undefined, instance.cookie), instance.env, ctx);
+  assert.equal((await ran.json()).job.status, 'completed');
+  const upgraded = await new Response((await instance.env.R2_BUCKET.get('legacy-manifest')).body).json();
+  assert.equal(upgraded.version, 2);
+  assert.equal(upgraded.parts[0].key, 'legacy-part');
+  assert.match(upgraded.contentHash, /^sha256-tree-v1:[a-f0-9]{64}$/);
 });
 
 test('one-time enrollment makes B a scoped managed node controlled by A', async () => {
@@ -254,6 +275,7 @@ test('one-time enrollment makes B a scoped managed node controlled by A', async 
     const migrated = await new Response((await controller.env.R2_BUCKET.get('consolidation-manifest')).body).json();
     assert.equal(migrated.parts[0].nodeId, 'main');
     assert.equal(migrated.parts[0].replicas[0].storageId, 'main');
+    assert.match(migrated.parts[0].hash, /^sha256-tree-v1:[a-f0-9]{64}$/);
     assert.equal(await node.env.R2_BUCKET.head(sourceKey), null);
 
     const ordinaryApi = await worker.fetch(new Request('https://node.example/api/list', { headers: { Cookie: node.cookie } }), node.env, ctx);
@@ -425,6 +447,7 @@ function memoryR2() {
       return entry ? cloneMeta(entry) : null;
     },
     async put(key, body, options = {}) {
+      if (options.onlyIf?.etagMatches && objects.get(key)?.etag !== options.onlyIf.etagMatches) return null;
       const bytes = new Uint8Array(await new Response(body).arrayBuffer());
       const entry = {
         bytes,
