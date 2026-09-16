@@ -6768,12 +6768,19 @@ async function resolveManifestParts(manifest, env) {
   const nodes = await getStorageNodes(env, true);
   const nodeMap = new Map(nodes.map(node => [node.id, node]));
   return [...manifest.parts].sort((a, b) => a.partNumber - b.partNumber).map(part => {
+    const replicas = manifestPartReplicas(part).map(replica => {
+      const nodeId = replica.storageId || replica.nodeId || part.nodeId;
+      if (replica.storageType === 'r2' || nodeId === MAIN_STORAGE_NODE_ID) return { ...replica, storageType: 'r2', nodeId: MAIN_STORAGE_NODE_ID };
+      const replicaNode = nodeMap.get(nodeId);
+      return { ...replica, storageType: 'node', nodeId, nodeUrl: replica.nodeUrl || replicaNode?.url, token: replicaNode?.token };
+    });
     if (part.storageType === 'r2' || part.nodeId === MAIN_STORAGE_NODE_ID) {
       return {
         ...part,
         storageType: 'r2',
         nodeId: MAIN_STORAGE_NODE_ID,
-        nodeName: part.nodeName || '主控账号'
+        nodeName: part.nodeName || '主控账号',
+        fallbackReplicas: replicas.filter(replica => replica.nodeId !== MAIN_STORAGE_NODE_ID)
       };
     }
     const node = nodeMap.get(part.nodeId);
@@ -6781,7 +6788,8 @@ async function resolveManifestParts(manifest, env) {
       ...part,
       storageType: 'node',
       nodeUrl: part.nodeUrl || node?.url,
-      token: part.token || node?.token
+      token: part.token || node?.token,
+      fallbackReplicas: replicas.filter(replica => replica.nodeId !== part.nodeId || replica.key !== part.key)
     };
   });
 }
@@ -6862,10 +6870,17 @@ function buildManifestSegments(parts, byteRange, segmentSize) {
 }
 
 async function fetchManifestSegmentBytes(R2, part, range) {
-  if (part.storageType === 'r2' || part.nodeId === MAIN_STORAGE_NODE_ID) {
-    return fetchR2PartBytes(R2, part, range);
+  const candidates = [part, ...(part.fallbackReplicas || [])];
+  let lastError;
+  for (const candidate of candidates) {
+    try {
+      if (candidate.storageType === 'r2' || candidate.nodeId === MAIN_STORAGE_NODE_ID) return await fetchR2PartBytes(R2, candidate, range);
+      return await fetchNodePartBytes(candidate, range);
+    } catch (err) {
+      lastError = err;
+    }
   }
-  return fetchNodePartBytes(part, range);
+  throw lastError || new Error('no readable replica');
 }
 
 function concatManifestPartStreams(parts, R2, byteRange = null, segmentSize = DOWNLOAD_RANGE_SIZE_BYTES) {
