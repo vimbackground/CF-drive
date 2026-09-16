@@ -6617,7 +6617,85 @@ async function runStorageJob(env, R2, jobId) {
   if (!job) throw new Error('storage job not found');
   if (job.type === 'consolidate-node') return runConsolidationJob(env, R2, jobId);
   if (job.type === 'upgrade-manifest-v1') return runManifestUpgradeJob(env, R2, jobId);
+  if (job.type === 'convert-stripe-to-mirror') return runMirrorConversionJob(env, R2, jobId);
   throw new Error('unsupported storage job');
+}
+
+async function openPartStream(R2, part) {
+  if (part.storageType === 'r2' || part.nodeId === MAIN_STORAGE_NODE_ID) {
+    const object = await R2.get(part.key);
+    if (!object?.body) throw new Error('source R2 part is unavailable');
+    return object.body;
+  }
+  const response = await fetch(part.nodeUrl.replace(/\/+$/, '') + '/api/node/part?key=' + encodeURIComponent(part.key), { headers: getNodeAuthHeaders(part) });
+  if (!response.ok || !response.body) throw new Error('source node part is unavailable');
+  return response.body;
+}
+
+async function createMirrorConversionJob(env, R2) {
+  const policy = normalizeStoragePolicy((await getAppConfig(env))?.storagePolicy);
+  if (policy.status !== 'converting_to_mirror' || !policy.mirrorNodeId) throw new Error('Mirror conversion has not been prepared');
+  const items = [];
+  let cursor;
+  do {
+    const listed = await R2.list({ cursor, limit: 1000, include: ['customMetadata'] });
+    for (const object of listed.objects || []) {
+      if (!hasManifestMetadata(object)) continue;
+      const manifest = await readManifestObject(await R2.get(object.key));
+      if (!isManifestFile(manifest) || Number(manifest.version) < 2) continue;
+      for (const part of manifest.parts) {
+        if (manifestPartReplicas(part).some(replica => (replica.storageId || replica.nodeId) === policy.mirrorNodeId)) continue;
+        items.push({ manifestKey: object.key, partId: part.partId, partNumber: part.partNumber, size: Number(part.size || 0), status: 'pending', error: '' });
+      }
+    }
+    cursor = listed.cursor;
+  } while (cursor);
+  const now = new Date().toISOString();
+  const job = { id: crypto.randomUUID(), type: 'convert-stripe-to-mirror', nodeId: policy.mirrorNodeId, status: items.length ? 'queued' : 'completed', items, totalBytes: items.reduce((sum, item) => sum + item.size, 0), completedBytes: 0, createdAt: now, updatedAt: now, error: '' };
+  const jobs = await getStorageJobs(env); jobs.push(job); await saveStorageJobs(env, jobs); return job;
+}
+
+async function runMirrorConversionJob(env, R2, jobId) {
+  const jobs = await getStorageJobs(env);
+  const job = jobs.find(item => item.id === jobId && item.type === 'convert-stripe-to-mirror');
+  if (!job) throw new Error('storage job not found');
+  if (['completed', 'paused', 'cancelled'].includes(job.status)) return job;
+  const mirrorNode = (await getStorageNodes(env, true)).find(node => node.id === job.nodeId && node.enabled !== false && node.lifecycle === 'active');
+  if (!mirrorNode) throw new Error('mirror node is unavailable');
+  const item = job.items.find(value => value.status === 'pending' || value.status === 'failed');
+  if (!item) { job.status = 'completed'; await saveStorageJobs(env, jobs); return job; }
+  job.status = 'copying'; item.status = 'copying';
+  try {
+    const object = await R2.get(item.manifestKey);
+    const manifest = await readManifestObject(object);
+    const sourcePart = manifest?.parts?.find(part => part.partId === item.partId || (!item.partId && part.partNumber === item.partNumber));
+    if (!sourcePart) throw new Error('manifest part no longer exists');
+    if (manifestPartReplicas(sourcePart).some(replica => (replica.storageId || replica.nodeId) === mirrorNode.id)) {
+      item.status = 'completed';
+    } else {
+      const [resolvedSource] = await resolveManifestParts({ parts: [sourcePart] }, env);
+      const targetKey = nodePartPrefix(env.INSTANCE_ID || 'legacy-controller') + 'mirror_' + job.id.replace(/-/g, '') + '_' + String(item.partNumber).padStart(6, '0');
+      const copied = await fetch(mirrorNode.url.replace(/\/+$/, '') + '/api/node/part?key=' + encodeURIComponent(targetKey) + '&size=' + item.size, { method: 'PUT', headers: getNodeAuthHeaders(mirrorNode), body: await openPartStream(R2, resolvedSource) });
+      if (!copied.ok) throw new Error('mirror copy failed');
+      const sourceHash = await manifestPartTreeHash(env, R2, resolvedSource);
+      const targetHash = await manifestPartTreeHash(env, R2, { storageType: 'node', nodeId: mirrorNode.id, nodeUrl: mirrorNode.url, token: mirrorNode.token, key: targetKey, size: item.size });
+      if (!constantTimeEqual(sourceHash, targetHash) || (sourcePart.hash && !constantTimeEqual(sourcePart.hash, sourceHash))) throw new Error('mirror checksum verification failed');
+      sourcePart.hash = sourceHash;
+      sourcePart.replicas = [...manifestPartReplicas(sourcePart), { storageId: mirrorNode.id, nodeId: mirrorNode.id, storageType: 'node', key: targetKey, nodeName: mirrorNode.name, nodeUrl: mirrorNode.url, state: 'healthy' }];
+      manifest.generation = Math.max(1, Number(manifest.generation) || 1) + 1;
+      manifest.mode = manifest.parts.every(part => manifestPartReplicas(part).length >= 2) ? 'mirror' : 'stripe';
+      await putManifestCas(R2, item.manifestKey, object?.etag, manifest);
+      item.status = 'completed'; item.error = '';
+    }
+    job.completedBytes = job.items.filter(value => value.status === 'completed').reduce((sum, value) => sum + Number(value.size || 0), 0);
+    if (job.items.every(value => value.status === 'completed')) {
+      job.status = 'completed';
+      const config = await getAppConfig(env);
+      config.storagePolicy = { ...normalizeStoragePolicy(config.storagePolicy), mode: 'mirror', targetMode: null, status: 'healthy', updatedAt: new Date().toISOString() };
+      await saveAppConfig(env, config);
+    }
+  } catch (err) { item.status = 'failed'; item.error = err?.message || 'mirror conversion failed'; job.status = 'failed'; job.error = item.error; }
+  job.updatedAt = new Date().toISOString(); await saveStorageJobs(env, jobs); return job;
 }
 
 function manifestPartsSize(manifest) {
@@ -7907,6 +7985,15 @@ export default {
         return jsonResponse({ ok: true, job: publicStorageJob(job) }, 202);
       } catch (err) {
         return jsonResponse({ ok: false, error: err?.message || 'could not create manifest upgrade job' }, 409);
+      }
+    }
+
+    if (path === '/api/storage-policy/convert/run' && request.method === 'POST') {
+      try {
+        const job = await createMirrorConversionJob(env, R2);
+        return jsonResponse({ ok: true, job: publicStorageJob(job) }, 202);
+      } catch (err) {
+        return jsonResponse({ ok: false, error: err?.message || 'could not create Mirror conversion job' }, 409);
       }
     }
 
