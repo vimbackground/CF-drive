@@ -2807,6 +2807,13 @@ function renderStorageNodes(nodes) {
       drainBtn.disabled = node.lifecycle === 'draining';
       drainBtn.addEventListener('click', function() { drainStorageNode(node.id); });
 
+      const consolidateBtn = document.createElement('button');
+      consolidateBtn.className = 'icon-btn';
+      consolidateBtn.title = '归集分片到主控';
+      consolidateBtn.innerHTML = '<span class="material-icons-round">move_to_inbox</span>';
+      consolidateBtn.disabled = node.lifecycle !== 'draining';
+      consolidateBtn.addEventListener('click', function() { consolidateStorageNode(node.id); });
+
       const delBtn = document.createElement('button');
       delBtn.className = 'icon-btn';
       delBtn.title = '删除';
@@ -2815,7 +2822,7 @@ function renderStorageNodes(nodes) {
         deleteStorageNode(node.id);
       });
 
-      row.append(testBtn, rotateBtn, drainBtn, delBtn);
+      row.append(testBtn, rotateBtn, drainBtn, consolidateBtn, delBtn);
     }
 
     list.appendChild(row);
@@ -2861,6 +2868,26 @@ async function drainStorageNode(id) {
   const res = await fetch('/api/storage-nodes/drain?id=' + encodeURIComponent(id), { method: 'POST', headers: CSRF_HEADER });
   const data = await res.json().catch(() => ({}));
   showSnackbar(res.ok ? '节点已进入排空状态' : ('操作失败：' + (data.error || res.status)));
+  loadStorageNodes();
+}
+async function consolidateStorageNode(id) {
+  if (!confirm('将把此排空节点的有效分片逐个复制到主控 R2，并在校验与 manifest 切换成功后删除源分片。继续吗？')) return;
+  const created = await fetch('/api/storage-nodes/consolidate?id=' + encodeURIComponent(id), { method: 'POST', headers: CSRF_HEADER });
+  const data = await created.json().catch(() => ({}));
+  if (!created.ok || !data.job?.id) { showSnackbar('创建归集任务失败：' + (data.error || created.status)); return; }
+  const jobId = data.job.id;
+  showSnackbar('归集任务已创建，正在执行…');
+  for (let attempts = 0; attempts < 10000; attempts++) {
+    const run = await fetch('/api/storage-jobs/' + encodeURIComponent(jobId) + '/run', { method: 'POST', headers: CSRF_HEADER });
+    const result = await run.json().catch(() => ({}));
+    const job = result.job;
+    if (!run.ok || !job) { showSnackbar('归集暂停：' + (result.error || run.status)); break; }
+    const total = Math.max(1, Number(job.totalItems || 0));
+    showSnackbar('归集进度：' + Number(job.completedItems || 0) + '/' + total);
+    if (job.status === 'completed') { showSnackbar('归集已完成。请确认节点已无引用后再删除。'); break; }
+    if (job.status === 'failed' || job.status === 'paused' || job.status === 'cancelled') { showSnackbar('归集未完成：' + (job.error || job.status)); break; }
+    await new Promise(resolve => setTimeout(resolve, 0));
+  }
   loadStorageNodes();
 }
 async function testStorageNode(id) {
