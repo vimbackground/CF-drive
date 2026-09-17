@@ -406,6 +406,45 @@ test('Mirror recovery snapshots are encrypted to the offline public key before B
   }
 });
 
+test('Mirror-to-Stripe conversion verifies primaries and retains old B objects', async () => {
+  const ctx = { waitUntil() {} };
+  const controller = await initializedInstance('https://controller.example', 'controller-password', { NODE_CREDENTIAL_KEK: 'controller-test-kek' }, ctx);
+  const node = await initializedInstance('https://node.example', 'node-password', {}, ctx);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const request = input instanceof Request ? input : new Request(input, init?.body ? { ...init, duplex: 'half' } : init);
+    if (new URL(request.url).origin === 'https://node.example') return worker.fetch(request, node.env, ctx);
+    return originalFetch(input, init);
+  };
+  try {
+    const stripeUpload = await worker.fetch(new Request('https://controller.example/api/upload?path=mode/file.txt', {
+      method: 'POST', headers: { Cookie: controller.cookie, 'X-R2Drive-CSRF': 'same-origin' }, body: 'conversion fixture'
+    }), controller.env, ctx);
+    assert.equal(stripeUpload.status, 200);
+    const code = (await (await worker.fetch(apiRequest('POST', '/api/node-admin/enrollment', undefined, node.cookie), node.env, ctx)).json()).code;
+    await worker.fetch(apiRequest('POST', '/api/storage-nodes/enroll', { name: 'Mirror B', url: 'https://node.example', enrollmentCode: code }, controller.cookie), controller.env, ctx);
+    const nodeId = (await (await worker.fetch(apiRequest('GET', '/api/storage-nodes', undefined, controller.cookie), controller.env, ctx)).json()).nodes[0].id;
+    await worker.fetch(apiRequest('POST', '/api/storage-policy/convert', { targetMode: 'mirror', confirm: 'MIRROR', primaryFaultDomain: 'a', mirrorFaultDomain: 'b', mirrorNodeId: nodeId }, controller.cookie), controller.env, ctx);
+    const mirrorJob = (await (await worker.fetch(apiRequest('POST', '/api/storage-policy/convert/run', undefined, controller.cookie), controller.env, ctx)).json()).job;
+    const mirrorRun = await worker.fetch(apiRequest('POST', '/api/storage-jobs/' + encodeURIComponent(mirrorJob.id) + '/run', undefined, controller.cookie), controller.env, ctx);
+    assert.equal((await mirrorRun.json()).job.status, 'completed');
+    const mirroredEntry = JSON.parse(controller.env.DB._rows.get('r2drive:fs:file:mode/file.txt').value);
+    const oldReplicaKey = mirroredEntry.mirrorReplica.key;
+    const prepared = await worker.fetch(apiRequest('POST', '/api/storage-policy/convert', { targetMode: 'stripe', confirm: 'STRIPE' }, controller.cookie), controller.env, ctx);
+    assert.equal(prepared.status, 202);
+    const stripeJob = (await (await worker.fetch(apiRequest('POST', '/api/storage-policy/convert/run', undefined, controller.cookie), controller.env, ctx)).json()).job;
+    const stripeRun = await worker.fetch(apiRequest('POST', '/api/storage-jobs/' + encodeURIComponent(stripeJob.id) + '/run', undefined, controller.cookie), controller.env, ctx);
+    assert.equal((await stripeRun.json()).job.status, 'completed');
+    const stripePolicy = await worker.fetch(apiRequest('GET', '/api/storage-policy', undefined, controller.cookie), controller.env, ctx);
+    assert.equal((await stripePolicy.json()).policy.mode, 'stripe');
+    const stripedEntry = JSON.parse(controller.env.DB._rows.get('r2drive:fs:file:mode/file.txt').value);
+    assert.equal(Object.hasOwn(stripedEntry, 'mirrorReplica'), false);
+    assert.ok(await node.env.R2_BUCKET.head(oldReplicaKey));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('legacy public shared-folder routes do not bypass managed shares', async () => {
   const env = webDavEnvironment();
   const ctx = { waitUntil() {} };

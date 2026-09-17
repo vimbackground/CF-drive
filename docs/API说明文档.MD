@@ -114,8 +114,8 @@
 | `POST /api/storage-nodes/test?id=<id>` | 检查 ping 与容量接口。 |
 | `GET /api/storage-nodes/r2-files?id=main&cursor=&limit=100` | 查看主控或指定节点对象；`limit` 范围 1–200。 |
 | `GET /api/storage-policy` | 返回当前存储策略及已实现能力；`mirror.recovery` 仍表示完整接管能力，`mirror.recoverySnapshot` 表示已支持加密快照同步。 |
-| `POST /api/storage-policy/convert` | 以 `{targetMode:"mirror",mirrorNodeId,primaryFaultDomain,mirrorFaultDomain,confirm:"MIRROR"}` 进入转换准备；两个故障域必须由管理员声明且不同。 |
-| `POST /api/storage-policy/convert/run` | 创建 Stripe→Mirror 副本迁移作业；完成所有分片校验前策略保持 `converting_to_mirror`。 |
+| `POST /api/storage-policy/convert` | 以 `{targetMode:"mirror",mirrorNodeId,primaryFaultDomain,mirrorFaultDomain,confirm:"MIRROR"}` 进入 Stripe→Mirror 准备；或以 `{targetMode:"stripe",confirm:"STRIPE"}` 从健康 Mirror 进入降级准备。 |
+| `POST /api/storage-policy/convert/run` | 根据当前目标模式创建转换作业：Stripe→Mirror 补齐 B 副本；Mirror→Stripe 校验 A 主副本后移除 Mirror placement，并保留旧 B 对象观察期。 |
 | `GET /api/storage-jobs` | 列出持久化存储作业及其进度。 |
 | `POST /api/storage-jobs/<id>/run` | 执行一个归集分片；复制、分段 SHA-256 校验、切换 manifest 并清理源分片。 |
 | `POST /api/storage-jobs/<id>/pause\|resume\|cancel` | 暂停、继续或取消尚未完成的归集作业；取消不会删除源分片。 |

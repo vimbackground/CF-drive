@@ -6925,6 +6925,7 @@ async function runStorageJob(env, R2, jobId) {
   if (job.type === 'consolidate-node') return runConsolidationJob(env, R2, jobId);
   if (job.type === 'upgrade-manifest-v1') return runManifestUpgradeJob(env, R2, jobId);
   if (['convert-stripe-to-mirror', 'mirror-repair'].includes(job.type)) return runMirrorConversionJob(env, R2, jobId);
+  if (job.type === 'convert-mirror-to-stripe') return runMirrorToStripeJob(env, R2, jobId);
   if (job.type === 'mirror-scrub') return runMirrorScrubJob(env, R2, jobId);
   throw new Error('unsupported storage job');
 }
@@ -6972,6 +6973,70 @@ async function createMirrorConversionJob(env, R2, forceRepair = false) {
     await saveAppConfig(env, config);
   }
   const jobs = await getStorageJobs(env); jobs.push(job); await saveStorageJobs(env, jobs); return job;
+}
+
+async function createMirrorToStripeJob(env, R2) {
+  const policy = normalizeStoragePolicy((await getAppConfig(env))?.storagePolicy);
+  if (policy.status !== 'converting_to_stripe' || policy.mode !== 'mirror') throw new Error('Mirror-to-Stripe conversion has not been prepared');
+  const items = [];
+  for (const object of await listR2ObjectsByPrefix(R2, '')) {
+    if (!hasManifestMetadata(object)) continue;
+    const manifest = await readManifestObject(await R2.get(object.key));
+    if (isManifestFile(manifest) && manifest.mode === 'mirror') items.push({ kind: 'manifest', manifestKey: object.key, size: Number(manifest.size || 0), status: 'pending', error: '' });
+  }
+  for (const key of await kvListKeys(env, FS_FILE_PREFIX)) {
+    const entry = await kvGetJson(env, key);
+    if (entry?.storageKey && entry.mirrorReplica?.key) items.push({ kind: 'file', filePath: entry.path, storageKey: entry.storageKey, size: Number(entry.size || 0), status: 'pending', error: '' });
+  }
+  const now = new Date().toISOString();
+  const job = { id: crypto.randomUUID(), type: 'convert-mirror-to-stripe', nodeId: '', status: items.length ? 'queued' : 'completed', items, totalBytes: items.reduce((sum, item) => sum + item.size, 0), completedBytes: 0, createdAt: now, updatedAt: now, error: '' };
+  if (!items.length) {
+    const config = await getAppConfig(env);
+    config.storagePolicy = { ...defaultStoragePolicy(), status: 'unprotected', updatedAt: now };
+    await saveAppConfig(env, config);
+  }
+  const jobs = await getStorageJobs(env); jobs.push(job); await saveStorageJobs(env, jobs); return job;
+}
+
+async function runMirrorToStripeJob(env, R2, jobId) {
+  const jobs = await getStorageJobs(env);
+  const job = jobs.find(item => item.id === jobId && item.type === 'convert-mirror-to-stripe');
+  if (!job) throw new Error('storage job not found');
+  if (['completed', 'paused', 'cancelled'].includes(job.status)) return job;
+  const item = job.items.find(value => value.status === 'pending' || value.status === 'failed');
+  if (!item) { job.status = 'completed'; await saveStorageJobs(env, jobs); return job; }
+  job.status = 'switching'; item.status = 'switching';
+  try {
+    if (item.kind === 'file') {
+      const entry = await getFileEntry(env, item.filePath);
+      if (entry?.storageKey === item.storageKey && entry.mirrorReplica?.key) {
+        if (!await R2.head(entry.storageKey)) throw new Error('primary file is unavailable');
+        const next = { ...entry }; delete next.mirrorReplica; await putFileEntry(env, next);
+      }
+    } else {
+      const object = await R2.get(item.manifestKey);
+      const manifest = await readManifestObject(object);
+      if (!isManifestFile(manifest)) throw new Error('manifest no longer exists');
+      for (const part of manifest.parts) {
+        const primary = manifestPartReplicas(part).find(replica => (replica.storageId || replica.nodeId) === MAIN_STORAGE_NODE_ID);
+        if (!primary) throw new Error('Mirror manifest has no primary placement');
+        const resolved = { ...primary, storageType: 'r2', nodeId: MAIN_STORAGE_NODE_ID, size: part.size };
+        if (!constantTimeEqual(await manifestPartTreeHash(env, R2, resolved), part.hash)) throw new Error('primary replica checksum verification failed');
+        Object.assign(part, { key: primary.key, storageType: 'r2', nodeId: MAIN_STORAGE_NODE_ID, nodeName: '主控账号', nodeUrl: '', replicas: [{ storageId: MAIN_STORAGE_NODE_ID, nodeId: MAIN_STORAGE_NODE_ID, storageType: 'r2', key: primary.key, state: 'healthy' }] });
+      }
+      manifest.mode = 'stripe'; manifest.generation = Math.max(1, Number(manifest.generation) || 1) + 1;
+      await putManifestCas(R2, item.manifestKey, object.etag, manifest);
+    }
+    item.status = 'completed'; item.error = '';
+    job.completedBytes = job.items.filter(value => value.status === 'completed').reduce((sum, value) => sum + Number(value.size || 0), 0);
+    if (job.items.every(value => value.status === 'completed')) {
+      job.status = 'completed';
+      const config = await getAppConfig(env);
+      config.storagePolicy = { ...defaultStoragePolicy(), status: 'unprotected', updatedAt: new Date().toISOString() };
+      await saveAppConfig(env, config);
+    }
+  } catch (err) { item.status = 'failed'; item.error = err?.message || 'Mirror-to-Stripe conversion failed'; job.status = 'failed'; job.error = item.error; }
+  job.updatedAt = new Date().toISOString(); await saveStorageJobs(env, jobs); return job;
 }
 
 async function runMirrorConversionJob(env, R2, jobId) {
@@ -8399,7 +8464,15 @@ export default {
       if (!appConfig) return jsonResponse({ ok: false, error: 'legacy configuration migration required' }, 409);
       const body = await request.json().catch(() => ({}));
       const targetMode = String(body.targetMode || '').trim();
-      if (targetMode !== 'mirror') return jsonResponse({ ok: false, error: 'only Stripe-to-Mirror preparation is currently supported' }, 409);
+      if (targetMode === 'stripe') {
+        const current = normalizeStoragePolicy(appConfig.storagePolicy);
+        if (current.mode !== 'mirror' || current.status !== 'healthy') return jsonResponse({ ok: false, error: 'only a healthy Mirror can be converted to Stripe' }, 409);
+        if (body.confirm !== 'STRIPE') return jsonResponse({ ok: false, error: 'explicit STRIPE confirmation is required' }, 400);
+        appConfig.storagePolicy = { ...current, targetMode: 'stripe', status: 'converting_to_stripe', updatedAt: new Date().toISOString() };
+        await saveAppConfig(env, appConfig);
+        return jsonResponse({ ok: true, policy: publicStoragePolicy(appConfig.storagePolicy), warning: 'Protected writes are paused while Mirror replicas are reduced to one primary placement.' }, 202);
+      }
+      if (targetMode !== 'mirror') return jsonResponse({ ok: false, error: 'targetMode must be mirror or stripe' }, 400);
       if (body.confirm !== 'MIRROR') return jsonResponse({ ok: false, error: 'explicit MIRROR confirmation is required' }, 400);
       const primaryFaultDomain = String(body.primaryFaultDomain || '').trim().slice(0, 100);
       const mirrorFaultDomain = String(body.mirrorFaultDomain || '').trim().slice(0, 100);
@@ -8451,7 +8524,8 @@ export default {
 
     if (path === '/api/storage-policy/convert/run' && request.method === 'POST') {
       try {
-        const job = await createMirrorConversionJob(env, R2);
+        const policy = normalizeStoragePolicy(appConfig?.storagePolicy);
+        const job = policy.targetMode === 'stripe' ? await createMirrorToStripeJob(env, R2) : await createMirrorConversionJob(env, R2);
         return jsonResponse({ ok: true, job: publicStorageJob(job) }, 202);
       } catch (err) {
         return jsonResponse({ ok: false, error: err?.message || 'could not create Mirror conversion job' }, 409);
