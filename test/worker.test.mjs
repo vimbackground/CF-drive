@@ -382,6 +382,25 @@ test('Mirror recovery snapshots are encrypted to the offline public key before B
     assert.doesNotMatch(stored, /r2drive:app:config:v1/);
     assert.doesNotMatch(stored, /controller-password/);
     assert.match(stored, /ECDH-P256\/A256GCM/);
+
+    const standbyStatus = await worker.fetch(apiRequest('GET', '/api/recovery/status', undefined, node.cookie), node.env, ctx);
+    assert.equal(standbyStatus.status, 200);
+    assert.equal((await standbyStatus.json()).packages[0].clusterId, snapshotBody.snapshot.clusterId);
+    const privateKeyJwk = await crypto.subtle.exportKey('jwk', recoveryKey.privateKey);
+    const promoted = await worker.fetch(apiRequest('POST', '/api/recovery/promote', {
+      confirm: 'PROMOTE', clusterId: snapshotBody.snapshot.clusterId, privateKeyJwk
+    }, node.cookie), node.env, ctx);
+    assert.equal(promoted.status, 202, await promoted.clone().text());
+    assert.equal((await promoted.json()).promotion.controllerEpoch, 1);
+    const recoveredLogin = await worker.fetch(apiRequest('POST', '/api/login', { password: 'controller-password' }), node.env, ctx);
+    assert.equal(recoveredLogin.status, 200);
+    const recoveredCookie = recoveredLogin.headers.get('Set-Cookie').split(';', 1)[0];
+    const recoveredSmallFile = await worker.fetch(new Request('https://node.example/api/download?path=recovery/preexisting.txt', { headers: { Cookie: recoveredCookie } }), node.env, ctx);
+    assert.equal(recoveredSmallFile.status, 200);
+    assert.equal(await recoveredSmallFile.text(), 'pre-existing stripe file');
+    const recoveredDistributedFile = await worker.fetch(new Request('https://node.example/api/download?path=recovery/mirrored.bin', { headers: { Cookie: recoveredCookie } }), node.env, ctx);
+    assert.equal(recoveredDistributedFile.status, 200);
+    assert.equal((await recoveredDistributedFile.arrayBuffer()).byteLength, size);
   } finally {
     globalThis.fetch = originalFetch;
   }

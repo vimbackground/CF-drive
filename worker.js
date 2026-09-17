@@ -4635,6 +4635,7 @@ function normalizeRecoveryConfig(value) {
     clusterId: /^[a-zA-Z0-9_-]{16,128}$/.test(String(recovery.clusterId || '')) ? String(recovery.clusterId) : '',
     commitSequence: Math.max(0, Math.floor(Number(recovery.commitSequence) || 0)),
     syncedCommitSequence: Math.max(0, Math.floor(Number(recovery.syncedCommitSequence) || 0)),
+    controllerEpoch: Math.max(0, Math.floor(Number(recovery.controllerEpoch) || 0)),
     lastSnapshotAt: String(recovery.lastSnapshotAt || ''),
     lastSyncedAt: String(recovery.lastSyncedAt || ''),
     updatedAt: String(recovery.updatedAt || '')
@@ -4650,6 +4651,7 @@ function publicRecoveryConfig(value) {
     clusterId: recovery.clusterId,
     commitSequence: recovery.commitSequence,
     syncedCommitSequence: recovery.syncedCommitSequence,
+    controllerEpoch: recovery.controllerEpoch,
     snapshotCurrent: recovery.commitSequence > 0 && recovery.commitSequence === recovery.syncedCommitSequence,
     lastSnapshotAt: recovery.lastSnapshotAt,
     lastSyncedAt: recovery.lastSyncedAt,
@@ -4831,6 +4833,93 @@ async function synchronizeRecoverySnapshot(env, appConfig) {
   appConfig.recovery = { ...nextRecovery, syncedCommitSequence: nextRecovery.commitSequence, lastSyncedAt: new Date().toISOString() };
   await saveAppConfig(env, appConfig);
   return { clusterId: nextRecovery.clusterId, commitSequence: nextRecovery.commitSequence, recordCount: snapshot.records.length };
+}
+
+async function decryptRecoverySnapshot(recoveryPackage, privateKeyJwk) {
+  const envelope = await validateRecoveryPackage(recoveryPackage);
+  const privateKey = await crypto.subtle.importKey('jwk', privateKeyJwk, { name: 'ECDH', namedCurve: 'P-256' }, false, ['deriveKey']);
+  const ephemeralPublicKey = await crypto.subtle.importKey('jwk', envelope.ephemeralPublicKeyJwk, { name: 'ECDH', namedCurve: 'P-256' }, false, []);
+  const key = await crypto.subtle.deriveKey({ name: 'ECDH', public: ephemeralPublicKey }, privateKey, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
+  const additionalData = new TextEncoder().encode(`cf-drive:recovery:v1:${envelope.clusterId}:${envelope.commitSequence}`);
+  const plaintext = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: base64UrlDecode(envelope.iv), additionalData }, key, base64UrlDecode(envelope.ciphertext));
+  const snapshot = JSON.parse(new TextDecoder().decode(plaintext));
+  if (Number(snapshot?.version) !== RECOVERY_PACKAGE_VERSION || snapshot.clusterId !== envelope.clusterId || Number(snapshot.commitSequence) !== envelope.commitSequence || !Array.isArray(snapshot.records)) {
+    throw new Error('recovery snapshot integrity check failed');
+  }
+  const records = new Map();
+  for (const record of snapshot.records) {
+    if (!record || !isRecoveryRecordKey(String(record.key || '')) || typeof record.value !== 'string' || records.has(record.key)) throw new Error('recovery snapshot contains invalid records');
+    records.set(record.key, record.value);
+  }
+  const config = JSON.parse(records.get(APP_CONFIG_KEY) || 'null');
+  if (config?.version !== 1 || !config.instanceId) throw new Error('recovery snapshot has no valid application configuration');
+  return { envelope, records, sourceConfig: config };
+}
+
+async function listR2ObjectsByPrefix(R2, prefix) {
+  const objects = [];
+  let cursor;
+  do {
+    const listed = await R2.list({ prefix, cursor, limit: 1000, include: ['customMetadata'] });
+    objects.push(...(listed.objects || []));
+    cursor = listed.cursor;
+  } while (cursor);
+  return objects;
+}
+
+async function promoteRecoveryStandby(env, R2, standbyConfig, clusterId, privateKeyJwk) {
+  const recoveryPackage = await kvGetJson(env, RECOVERY_PACKAGE_PREFIX + clusterId);
+  if (!recoveryPackage) throw new Error('recovery package was not found on this standby');
+  const { envelope, records, sourceConfig } = await decryptRecoverySnapshot(recoveryPackage, privateKeyJwk);
+  const sourcePolicy = normalizeStoragePolicy(sourceConfig.storagePolicy);
+  if (sourcePolicy.mode !== 'mirror' || !sourcePolicy.mirrorNodeId) throw new Error('recovery snapshot is not from a Mirror controller');
+  const mirrorPrefix = nodePartPrefix(sourceConfig.instanceId);
+  const mirroredManifests = new Map();
+  for (const object of await listR2ObjectsByPrefix(R2, mirrorPrefix + 'mirror_manifest_')) {
+    const value = await new Response((await R2.get(object.key)).body).json().catch(() => null);
+    if (value?.recoverySourceManifestKey && isManifestFile(value)) mirroredManifests.set(value.recoverySourceManifestKey, value);
+  }
+  const restoredRecords = [];
+  for (const [key, value] of records) {
+    if (key === APP_CONFIG_KEY || key === STORAGE_NODES_KV_KEY || key === STORAGE_JOBS_KV_KEY) continue;
+    if (!key.startsWith(FS_FILE_PREFIX)) { restoredRecords.push({ key, value }); continue; }
+    const entry = JSON.parse(value);
+    if (entry.storageType === 'distributed') {
+      const manifest = mirroredManifests.get(entry.storageKey);
+      if (!manifest) throw new Error(`standby manifest is missing for ${entry.path}`);
+      const promotedParts = [];
+      for (const part of manifest.parts) {
+        const replica = manifestPartReplicas(part).find(value => (value.storageId || value.nodeId) === sourcePolicy.mirrorNodeId);
+        if (!replica?.key || !await R2.head(replica.key)) throw new Error(`standby data replica is missing for ${entry.path}`);
+        promotedParts.push({ ...part, key: replica.key, storageType: 'r2', nodeId: MAIN_STORAGE_NODE_ID, nodeName: '主控账号', nodeUrl: '', replicas: [{ storageId: MAIN_STORAGE_NODE_ID, nodeId: MAIN_STORAGE_NODE_ID, storageType: 'r2', key: replica.key, state: 'healthy' }] });
+      }
+      const promotedManifest = { ...manifest, mode: 'stripe', generation: Math.max(1, Number(manifest.generation) || 1) + 1, parts: promotedParts };
+      delete promotedManifest.recoverySourceManifestKey;
+      delete promotedManifest.recoveryManifestVersion;
+      await R2.put(entry.storageKey, JSON.stringify(promotedManifest), { httpMetadata: { contentType: MANIFEST_CONTENT_TYPE }, customMetadata: { r2driveManifest: '1', r2driveSize: String(promotedManifest.size) } });
+      restoredRecords.push({ key, value });
+    } else {
+      if (!entry.mirrorReplica?.key || !await R2.head(entry.mirrorReplica.key)) throw new Error(`standby file replica is missing for ${entry.path}`);
+      const promotedEntry = { ...entry, storageKey: entry.mirrorReplica.key, storageType: 'r2' };
+      delete promotedEntry.mirrorReplica;
+      restoredRecords.push({ key, value: JSON.stringify(promotedEntry) });
+    }
+  }
+  const clearKeys = new Set([APP_CONFIG_KEY, STORAGE_NODES_KV_KEY, STORAGE_JOBS_KV_KEY]);
+  for (const prefix of recoveryRecordPrefixes()) for (const key of await kvListKeys(env, prefix)) clearKeys.add(key);
+  await Promise.all([...clearKeys].map(key => kvDelete(env, key)));
+  for (const record of restoredRecords) await kvPutRaw(env, record.key, record.value);
+  const promotedConfig = {
+    ...sourceConfig,
+    instanceId: standbyConfig.instanceId || crypto.randomUUID(),
+    instanceMode: 'standalone',
+    managedNode: { controllerUrl: '', controllers: [] },
+    storageNodeToken: '',
+    storagePolicy: { ...defaultStoragePolicy(), status: 'degraded', updatedAt: new Date().toISOString() },
+    recovery: { ...normalizeRecoveryConfig(sourceConfig.recovery), clusterId: envelope.clusterId, syncedCommitSequence: envelope.commitSequence, controllerEpoch: normalizeRecoveryConfig(sourceConfig.recovery).controllerEpoch + 1, updatedAt: new Date().toISOString() }
+  };
+  await saveAppConfig(env, promotedConfig);
+  return { clusterId: envelope.clusterId, commitSequence: envelope.commitSequence, controllerEpoch: promotedConfig.recovery.controllerEpoch, restoredRecords: restoredRecords.length };
 }
 
 function normalizeControllerUrl(value = '') {
@@ -7951,7 +8040,7 @@ export default {
 
     if (appConfig?.instanceMode === 'managed_node') {
       const allowed = path === '/login' || path === '/logout' || path === '/settings' || path === '/node-settings' ||
-        path === '/api/login' || path === '/api/logout' || path === '/api/settings' || path.startsWith('/api/node-admin/');
+        path === '/api/login' || path === '/api/logout' || path === '/api/settings' || path === '/api/recovery/status' || path === '/api/recovery/promote' || path.startsWith('/api/node-admin/');
       if (path === '/' && request.method === 'GET' && appConfig.managedNode?.controllerUrl) {
         return Response.redirect(appConfig.managedNode.controllerUrl, 302);
       }
@@ -8251,6 +8340,14 @@ export default {
     }
 
     if (path === '/api/recovery/status' && request.method === 'GET') {
+      if (appConfig?.instanceMode === 'managed_node') {
+        const packages = [];
+        for (const key of await kvListKeys(env, RECOVERY_PACKAGE_PREFIX)) {
+          const value = await kvGetJson(env, key);
+          if (value?.clusterId && Number.isSafeInteger(Number(value.commitSequence))) packages.push({ clusterId: value.clusterId, commitSequence: Number(value.commitSequence), createdAt: value.createdAt || '' });
+        }
+        return jsonResponse({ ok: true, standby: true, packages });
+      }
       return jsonResponse({ ok: true, recovery: publicRecoveryConfig(appConfig?.recovery), policy: publicStoragePolicy(appConfig?.storagePolicy) });
     }
 
@@ -8281,6 +8378,20 @@ export default {
         return jsonResponse({ ok: true, snapshot, recovery: publicRecoveryConfig(appConfig.recovery) }, 202);
       } catch (err) {
         return jsonResponse({ ok: false, error: err?.message || 'could not synchronize recovery snapshot', recovery: publicRecoveryConfig(appConfig.recovery) }, 409);
+      }
+    }
+
+    if (path === '/api/recovery/promote' && request.method === 'POST') {
+      if (!appConfig || appConfig.instanceMode !== 'managed_node') return jsonResponse({ ok: false, error: 'this endpoint is only available on a recovery standby' }, 409);
+      const body = await request.json().catch(() => ({}));
+      if (body.confirm !== 'PROMOTE') return jsonResponse({ ok: false, error: 'explicit PROMOTE confirmation is required' }, 400);
+      const clusterId = String(body.clusterId || '').trim();
+      if (!/^[a-zA-Z0-9_-]{16,128}$/.test(clusterId)) return jsonResponse({ ok: false, error: 'invalid recovery cluster ID' }, 400);
+      try {
+        const promotion = await promoteRecoveryStandby(env, R2, appConfig, clusterId, body.privateKeyJwk);
+        return jsonResponse({ ok: true, promotion, warning: 'The promoted controller is running in degraded Stripe mode until a new Mirror is configured. Log in again with the recovered controller credentials.' }, 202);
+      } catch (err) {
+        return jsonResponse({ ok: false, error: err?.message || 'recovery promotion failed' }, 409);
       }
     }
 

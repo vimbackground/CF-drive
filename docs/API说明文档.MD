@@ -121,9 +121,10 @@
 | `POST /api/storage-jobs/<id>/pause\|resume\|cancel` | 暂停、继续或取消尚未完成的归集作业；取消不会删除源分片。 |
 | `POST /api/mirror/scrub` | 创建 Mirror 副本校验作业；摘要或副本布局异常会将策略标记为 `degraded`。 |
 | `POST /api/mirror/repair` | 创建 Mirror repair 作业；用主副本重建镜像 placement，校验后以 CAS 替换。 |
-| `GET /api/recovery/status` | 返回恢复公钥登记、集群 ID、快照提交序号及 B 确认序号；不返回公钥内容或任何私钥。 |
+| `GET /api/recovery/status` | A 返回恢复公钥登记、集群 ID、快照提交序号及 B 确认序号；B 受管节点仅返回其已保存的恢复包标识和提交序号；不返回公钥内容或任何私钥。 |
 | `POST /api/recovery/configure` | 以 `{confirm:"RECOVERY_PUBLIC_KEY",publicKeyJwk}` 登记离线保管的 P-256 ECDH 公钥。重新登记会使旧快照不再可用。 |
 | `POST /api/recovery/snapshot` | 仅在 Mirror 为 `healthy` 时生成完整控制面快照，以 ECDH-P256/AES-GCM 加密并同步至固定 B；尚不等同于灾备接管。 |
+| `POST /api/recovery/promote` | 仅固定 B 的本地管理员可调用。提交 `{confirm:"PROMOTE",clusterId,privateKeyJwk}` 后，校验并解密恢复包、验证 B 数据/manifest 副本、恢复控制面、撤销 A 的节点控制权限并提升 B。成功后 B 处于降级 Stripe 状态，需重新登录和重建 Mirror。 |
 
 新建 Stripe manifest 使用 `sha256-tree-v1:<hex>`：对每个不超过 8 MiB 的数据段做 SHA-256，再对顺序叶子摘要做根哈希。它避免将完整大分片加载到 Worker 内存，并用于归集前后的数据一致性核验。
 
