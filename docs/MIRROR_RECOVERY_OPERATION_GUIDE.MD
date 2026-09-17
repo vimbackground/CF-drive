@@ -38,7 +38,7 @@ POST /api/recovery/snapshot
 GET /api/recovery/status
 ```
 
-只有 `snapshotCurrent: true`，且 `commitSequence` 与 `syncedCommitSequence` 相同，才表示 B 已确认该手动快照。把 `clusterId` 与快照时间记录到演练/值班记录中。
+只有 `snapshotAcknowledged: true`，且 `commitSequence` 与 `syncedCommitSequence` 相同，才表示 B 已确认**最后一次手动快照**。它不表示快照之后的写入已自动同步；把 `clusterId` 与快照时间记录到演练/值班记录中。
 
 恢复包使用 ECDH-P256/AES-GCM 加密；B 保存密文，不保存恢复私钥或明文控制面。
 

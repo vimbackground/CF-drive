@@ -4652,7 +4652,7 @@ function publicRecoveryConfig(value) {
     commitSequence: recovery.commitSequence,
     syncedCommitSequence: recovery.syncedCommitSequence,
     controllerEpoch: recovery.controllerEpoch,
-    snapshotCurrent: recovery.commitSequence > 0 && recovery.commitSequence === recovery.syncedCommitSequence,
+    snapshotAcknowledged: recovery.commitSequence > 0 && recovery.commitSequence === recovery.syncedCommitSequence,
     lastSnapshotAt: recovery.lastSnapshotAt,
     lastSyncedAt: recovery.lastSyncedAt,
     updatedAt: recovery.updatedAt

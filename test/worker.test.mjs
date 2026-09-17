@@ -377,7 +377,7 @@ test('Mirror recovery snapshots are encrypted to the offline public key before B
     const snapshot = await worker.fetch(apiRequest('POST', '/api/recovery/snapshot', undefined, controller.cookie), controller.env, ctx);
     assert.equal(snapshot.status, 202, await snapshot.clone().text());
     const snapshotBody = await snapshot.json();
-    assert.equal(snapshotBody.recovery.snapshotCurrent, true);
+    assert.equal(snapshotBody.recovery.snapshotAcknowledged, true);
     const stored = node.env.DB._rows.get('r2drive:recovery:package:' + snapshotBody.snapshot.clusterId).value;
     assert.doesNotMatch(stored, /r2drive:app:config:v1/);
     assert.doesNotMatch(stored, /controller-password/);
