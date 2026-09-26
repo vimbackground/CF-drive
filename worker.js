@@ -239,6 +239,11 @@ function renderHTML(content, title = 'CF-drive') {
     font-size: 22px; font-weight: 400;
     color: var(--on-surface);
   }
+  .app-version {
+    font-size: 11px; color: var(--on-surface-variant);
+    border: 1px solid var(--outline); border-radius: 999px;
+    padding: 2px 6px; white-space: nowrap;
+  }
   .app-bar-spacer { flex: 1; }
   .app-bar-actions { display: flex; align-items: center; gap: 8px; }
 
@@ -3536,6 +3541,7 @@ function renderDrivePage(folders, files, currentPath, siteTitle, cloudIconUrl = 
   <a class="app-bar-logo" href="/">
     ${renderLogoIcon(cloudIconUrl)}
     <span class="app-bar-title">${escapeHtml(siteTitle)}</span>
+    <span class="app-version" title="当前部署版本">v${CF_DRIVE_RELEASE.version}</span>
   </a>
   <div class="app-bar-spacer"></div>
     <div class="app-bar-actions">
@@ -8051,6 +8057,18 @@ export const __testables = {
   webDavPreconditionsPass
 };
 
+// Keep this release identity synchronized with package.json and version.json.
+// It is intentionally deployment metadata, not a storage schema version.
+const CF_DRIVE_RELEASE = Object.freeze({
+  version: '2.1.0',
+  versionCode: 210,
+  releaseDate: '2026-09-26'
+});
+
+function publicReleaseVersion() {
+  return { ...CF_DRIVE_RELEASE };
+}
+
 // ── Main Handler ──
 export default {
   async fetch(request, env, ctx) {
@@ -8061,6 +8079,10 @@ export default {
     let siteTitle = 'CF-drive';
     let cloudIconUrl = '';
     let loginBackgroundUrl = '';
+
+    if (path === '/api/version' && request.method === 'GET') {
+      return jsonResponse({ ok: true, release: publicReleaseVersion() });
+    }
 
     if (!R2) {
       return new Response('未配置 R2 存储桶。请在 wrangler.toml 中绑定 R2_BUCKET。', { status: 500 });

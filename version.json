@@ -1,6 +1,6 @@
 {
-  "version": "2.0.0",
-  "versionCode": 200,
-  "releaseDate": "2026-09-15",
-  "releaseNotes": "CF-drive 全新部署基线：R2 + D1 虚拟文件系统、受控分享、可选 WebDAV、存储节点、Git 自动发布与本地回归测试。"
+  "version": "2.1.0",
+  "versionCode": 210,
+  "releaseDate": "2026-09-26",
+  "releaseNotes": "新增双模式存储、跨账号 Mirror、加密恢复快照、人工 B 接管及网页化灾备操作入口；同时补齐本地图标映射。"
 }

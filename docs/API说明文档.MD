@@ -8,6 +8,7 @@
 
 ## 通用规则
 
+- `GET /api/version` 无需登录，返回当前 Worker 的发布版本、版本代码与发布日期；不包含配置或凭据。
 - 主站管理 API 需要先 `POST /api/login` 获得会话 Cookie。
 - 所有有副作用的管理 API 还需要同源校验；程序化调用请带 `X-R2Drive-CSRF: same-origin`。
 - 虚拟路径不以 `/` 开头或结尾，不能包含 `.`、`..`、控制字符或空段。

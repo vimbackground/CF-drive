@@ -51,6 +51,15 @@ test('uninitialized application fails closed until an owner public key is config
   assert.match(await response.text(), /BOOTSTRAP_OWNER_PUBLIC_KEY/);
 });
 
+test('release endpoint is available before setup and contains public deployment metadata', async () => {
+  const response = await worker.fetch(new Request('https://drive.example/api/version'), {}, { waitUntil() {} });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    ok: true,
+    release: { version: '2.1.0', versionCode: 210, releaseDate: '2026-09-26' }
+  });
+});
+
 test('owner-signed setup stores configuration in D1 and enables password login', async () => {
   const env = webDavEnvironment();
   delete env.ACCESS_PASSWORD;
