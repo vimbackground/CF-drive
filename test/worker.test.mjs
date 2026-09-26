@@ -56,7 +56,7 @@ test('release endpoint is available before setup and contains public deployment 
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), {
     ok: true,
-    release: { version: '2.1.0', versionCode: 210, releaseDate: '2026-09-26' }
+    release: { version: '2.1.1', versionCode: 211, releaseDate: '2026-09-26' }
   });
 });
 
@@ -105,6 +105,14 @@ test('owner-signed setup stores configuration in D1 and enables password login',
   const settingsPage = await worker.fetch(new Request('https://drive.example/settings', { headers: { Cookie: cookie } }), env, ctx);
   assert.equal(settingsPage.status, 200);
   assert.match(await settingsPage.text(), /utility-panel/);  assert.match(driveHtml, /id="shareWorkspace"/);
+  const recoveryPage = await worker.fetch(new Request('https://drive.example/recovery', { headers: { Cookie: cookie } }), env, ctx);
+  assert.equal(recoveryPage.status, 200);
+  const recoveryHtml = await recoveryPage.text();
+  assert.match(recoveryHtml, /id="operationStatus"/);
+  assert.match(recoveryHtml, /准备就绪：请选择一项操作。/);
+  const recoveryScript = recoveryHtml.match(/<script>([\s\S]*)<\/script>/)?.[1];
+  assert.ok(recoveryScript);
+  assert.doesNotThrow(() => new Function(recoveryScript));
   const shares = await worker.fetch(new Request('https://drive.example/shares', { headers: { Cookie: cookie } }), env, ctx);
   assert.equal(shares.status, 302);
   assert.equal(shares.headers.get('Location'), 'https://drive.example/');
@@ -254,6 +262,16 @@ test('one-time enrollment makes B a scoped managed node controlled by A', async 
     }, controller.cookie), controller.env, ctx);
     assert.equal(enrolled.status, 200);
     assert.equal((await enrolled.json()).node.credentialConfigured, true);
+
+    const recoveryLogin = await worker.fetch(new Request('https://node.example/recovery'), node.env, ctx);
+    assert.equal(recoveryLogin.status, 302);
+    assert.equal(recoveryLogin.headers.get('Location'), 'https://node.example/login?returnTo=%2Frecovery');
+    const nodeLoginPage = await worker.fetch(new Request('https://node.example/login?returnTo=%2Frecovery'), node.env, ctx);
+    assert.equal(nodeLoginPage.status, 200);
+    assert.match(await nodeLoginPage.text(), /nextAfterLogin = returnTo === '\/recovery'/);
+    const standbyRecovery = await worker.fetch(new Request('https://node.example/recovery', { headers: { Cookie: node.cookie } }), node.env, ctx);
+    assert.equal(standbyRecovery.status, 200);
+    assert.match(await standbyRecovery.text(), /执行 B 接管/);
 
     const nodeList = await worker.fetch(apiRequest('GET', '/api/storage-nodes', undefined, controller.cookie), controller.env, ctx);
     const nodeId = (await nodeList.json()).nodes[0].id;

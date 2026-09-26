@@ -3084,6 +3084,20 @@ function renderRecoveryPageSafe(settings, siteTitle = 'CF-drive') {
   return page.replace(/<script>([\s\S]*)<\/script>/, (_, script) => `<script>${script.replace(/\r?\n/g, '\\n')}</script>`);
 }
 
+function renderRecoveryPageWithStatus(settings, siteTitle = 'CF-drive') {
+  const statusCss = '#operationStatus{position:sticky;top:12px;z-index:10;margin:12px 0 18px;padding:12px 14px;border:1px solid #b8c8e8;border-radius:10px;background:#eef4ff;box-shadow:0 2px 8px #0001}#operationStatus strong{display:block;font-size:13px;color:#0b57d0;margin-bottom:4px}#operationStatus[data-state="running"]{border-color:#0b57d0;background:#e8f0fe}#operationStatus[data-state="error"]{border-color:#b3261e;background:#fce8e6}#operationStatus[data-state="success"]{border-color:#137333;background:#e6f4ea}#operationStatus #status{margin:0;white-space:pre-wrap;line-height:1.55}';
+  const statusMarkup = '<h1>灾备与恢复</h1><div id="operationStatus" data-state="idle" role="status" aria-live="polite"><strong>执行状态</strong><p id="status">准备就绪：请选择一项操作。</p></div><p id="intro"></p>';
+  const statusEnhancer = `;(()=>{const panel=document.getElementById('operationStatus');const previousSetStatus=setStatus;setStatus=message=>{previousSetStatus(message);const value=String(message||'准备就绪：请选择一项操作。');panel.dataset.state=/失败|错误|invalid|could not/i.test(value)?'error':/完成|已保存|已确认|成功|已在当前页面内存中读取/i.test(value)?'success':/正在|进度|创建中|迁移|校验|修复|快照/i.test(value)?'running':'idle'};setStatus('准备就绪：请选择一项操作。')})();`;
+  const page = renderRecoveryPage(settings, siteTitle)
+    .replace('</style>', `${statusCss}</style>`)
+    .replace('<h1>灾备与恢复</h1><p id="intro"></p>', statusMarkup)
+    .replace('<p id="status" role="alert"></p>', '');
+  const scriptStart = page.indexOf('<script>');
+  const scriptEnd = page.lastIndexOf('</script>');
+  const script = page.slice(scriptStart + 8, scriptEnd).split('\n').join('\\n');
+  return `${page.slice(0, scriptStart)}<script>${script}${statusEnhancer}</script>${page.slice(scriptEnd + 9)}`;
+}
+
 function renderNodeMaintenancePage(settings, siteTitle = 'CF-drive') {
   const safe = JSON.stringify(settings).replace(/</g, '\\u003c');
   return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>存储节点 - ${escapeHtml(siteTitle)}</title><style>body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;max-width:720px;margin:5vh auto;padding:24px;background:#f6f8fa;color:#1f2328}.panel{background:#fff;padding:28px;border-radius:12px;box-shadow:0 2px 12px #0001}button{margin:12px 8px 0 0;padding:10px 16px;border:0;border-radius:999px;background:#0b57d0;color:#fff;font:inherit;cursor:pointer}.danger{background:#b3261e}code{display:block;overflow-wrap:anywhere;padding:12px;background:#f1f3f5;border-radius:8px;margin-top:10px}small{color:#57606a}#status{white-space:pre-wrap}</style></head><body><main class="panel"><h1>存储节点维护</h1><p id="mode"></p><p id="controller"></p><section id="enroll"><h2>接入控制端</h2><p><small>创建一次性配对码后，在控制端 A 的“存储节点”中填写节点地址和此配对码。配对码仅显示一次，10 分钟后失效。</small></p><button id="create">创建配对码</button><code id="code" hidden></code></section><section id="managed" hidden><h2>受管节点</h2><p><small>此实例已停用普通网盘管理、分享、WebDAV 和孤儿清理。文件管理请前往控制端。仅在控制端已经排空此节点或无法恢复时解除绑定。</small></p><button id="open">打开控制端</button><button id="detach" class="danger">解除绑定并撤销控制端凭据</button></section><p id="status" role="alert"></p></main><script>const initial=${safe};const status=document.getElementById('status'),mode=document.getElementById('mode'),controller=document.getElementById('controller');mode.textContent=initial.instanceMode==='managed_node'?'状态：受管存储节点':'状态：独立实例';controller.textContent=initial.managedNode.controllerUrl?'控制端：'+initial.managedNode.controllerUrl:'';document.getElementById('enroll').hidden=initial.instanceMode==='managed_node';document.getElementById('managed').hidden=initial.instanceMode!=='managed_node';document.getElementById('open').onclick=()=>location.href=initial.managedNode.controllerUrl;document.getElementById('detach').onclick=async()=>{if(!confirm('确认解除绑定？这会立即阻止控制端访问分片。'))return;const r=await fetch('/api/node-admin/detach',{method:'POST',headers:{'Content-Type':'application/json','X-R2Drive-CSRF':'same-origin'},body:JSON.stringify({confirm:'DETACH'})});const d=await r.json().catch(()=>({}));status.textContent=r.ok?'已解除绑定，请刷新页面。':'解除失败：'+(d.error||r.status)};document.getElementById('create').onclick=async()=>{const r=await fetch('/api/node-admin/enrollment',{method:'POST',headers:{'X-R2Drive-CSRF':'same-origin'}});const d=await r.json().catch(()=>({}));if(!r.ok){status.textContent='创建失败：'+(d.error||r.status);return}const code=document.getElementById('code');code.hidden=false;code.textContent=d.code;status.textContent='请立即复制；关闭或刷新页面后无法再次查询。'};</script></body></html>`;
@@ -3117,11 +3131,13 @@ function renderLoginPage(error = '', siteTitle = 'CF-drive', cloudIconUrl = '', 
   </div>
 </div>
 <script>
+const returnTo = new URLSearchParams(location.search).get('returnTo');
+const nextAfterLogin = returnTo === '/recovery' || returnTo === '/node-settings' ? returnTo : '/';
 function login() {
   const pwd = document.getElementById('pwd').value;
   fetch('/api/login', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({password: pwd}) })
     .then(r => r.json()).then(d => {
-      if (d.ok) location.href = '/'; else document.getElementById('loginError').textContent = '密码错误，请重试';
+      if (d.ok) location.href = nextAfterLogin; else document.getElementById('loginError').textContent = '密码错误，请重试';
     });
 }
 </script>
@@ -8060,8 +8076,8 @@ export const __testables = {
 // Keep this release identity synchronized with package.json and version.json.
 // It is intentionally deployment metadata, not a storage schema version.
 const CF_DRIVE_RELEASE = Object.freeze({
-  version: '2.1.0',
-  versionCode: 210,
+  version: '2.1.1',
+  versionCode: 211,
   releaseDate: '2026-09-26'
 });
 
@@ -8196,15 +8212,15 @@ export default {
     }
 
     if (path === '/node-settings' && request.method === 'GET') {
-      if (!await isAuthenticated(request, env)) return Response.redirect(new URL('/login', url).toString(), 302);
+      if (!await isAuthenticated(request, env)) return Response.redirect(new URL('/login?returnTo=%2Fnode-settings', url).toString(), 302);
       if (!appConfig) return new Response('旧版实例需先迁移至 D1 配置。', { status: 409 });
       return htmlResponse(renderNodeMaintenancePage(publicAppSettings(appConfig), siteTitle));
     }
 
     if (path === '/recovery' && request.method === 'GET') {
-      if (!await isAuthenticated(request, env)) return Response.redirect(new URL('/login', url).toString(), 302);
+      if (!await isAuthenticated(request, env)) return Response.redirect(new URL('/login?returnTo=%2Frecovery', url).toString(), 302);
       if (!appConfig) return new Response('旧版实例需先迁移至 D1 配置。', { status: 409 });
-      return htmlResponse(renderRecoveryPageSafe(publicAppSettings(appConfig), siteTitle));
+      return htmlResponse(renderRecoveryPageWithStatus(publicAppSettings(appConfig), siteTitle));
     }
 
     if (path === '/api/node-admin/enrollment' && request.method === 'POST') {

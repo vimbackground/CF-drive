@@ -1,6 +1,6 @@
 {
-  "version": "2.1.0",
-  "versionCode": 210,
+  "version": "2.1.1",
+  "versionCode": 211,
   "releaseDate": "2026-09-26",
-  "releaseNotes": "新增双模式存储、跨账号 Mirror、加密恢复快照、人工 B 接管及网页化灾备操作入口；同时补齐本地图标映射。"
+  "releaseNotes": "修复灾备操作反馈不可见及 B 恢复页登录回跳；将执行状态固定在灾备页顶部。"
 }
